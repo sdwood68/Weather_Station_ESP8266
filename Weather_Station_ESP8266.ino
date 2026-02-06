@@ -80,9 +80,9 @@ AHT20 aht20;          // I2C Address 0x38
 Adafruit_AM2315 am2315;
 
 const char clientId[] = "ESP_Weather_Station";
-const char userId[] = "HA_MQTT";
-const char userPswd[] = "public";
-const char MQTTBroker[] = "192.168.12.163";
+const char userId[] = "MQTT_USER";
+const char userPswd[] = "MQTT_PASSWORD";
+const char MQTTBroker[] = "192.168.XXX.XXX";
 
 bool bAm2315 = false;
 bool bBmp280 = false;
