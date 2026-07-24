@@ -24,7 +24,7 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.4.2"
+#define FIRMWARE_VERSION "0.4.3"
 #define HARDWARE_MODEL "ESP8266 Weather Station"
 #define OTA_WINDOW_MS 120000UL
 #define PORTAL_RESET_MS 900000UL
@@ -224,7 +224,7 @@ void setup() {
   mqttBrokerPass = WiFiSettings.string("weather_mqtt_password", 1, 64, MQTT_BROKER_PASS, "MQTT password");
 
   Serial.printf("Configuration portal SSID: %s\n", WiFiSettings.hostname.c_str());
-  Serial.printf("Configuration portal password: %s\n", WiFiSettings.password.c_str());
+
 
   const bool configurationMissing =
       otaPassword.length() == 0 ||

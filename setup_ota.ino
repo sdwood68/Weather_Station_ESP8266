@@ -29,6 +29,7 @@ void resumeSensorTasks() {
 
 void onMqttConnected() {
   mqttDisconnectedAt = 0;
+  Serial.println(F("MQTT connected; publishing discovery and diagnostics"));
   device.setAvailability(true);
   firmwareVersion.setValue(FIRMWARE_VERSION);
   chipIdSensor.setValue(deviceChipId.c_str());
