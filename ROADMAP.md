@@ -225,7 +225,7 @@ Home Assistant retained request
 - [x] Confirm the updated sketch compiles with ArduinoHA.
 - [x] Add basic firmware-version reporting.
 - [x] Replace the static device ID and hostname with hardware-derived values.
-- [ ] Publish chip ID, MAC address, IP address, hostname, and firmware version
+- [x] Publish chip ID, MAC address, IP address, hostname, and firmware version
       as Home Assistant diagnostic entities.
 - [ ] Verify two devices can connect simultaneously without MQTT discovery,
       entity, hostname, or OTA collisions.

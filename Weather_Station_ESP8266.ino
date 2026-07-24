@@ -24,7 +24,8 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.4.0"
+#define FIRMWARE_VERSION "0.4.1"
+#define HARDWARE_MODEL "ESP8266 Weather Station"
 #define OTA_WINDOW_MS 120000UL
 #define PORTAL_RESET_MS 900000UL
 
@@ -93,12 +94,20 @@ HASensorNumber boxTemperature("box_temperature", HASensorNumber::PrecisionP1);
 HAButton otaButton("enable_ota");
 HASensor otaStatus("ota_status");
 HASensor firmwareVersion("firmware_version");
+HASensor chipIdSensor("chip_id");
+HASensor macAddressSensor("mac_address");
+HASensor ipAddressSensor("ip_address");
+HASensor hostnameSensor("hostname");
+HASensor resetReasonSensor("reset_reason");
+HASensorNumber wifiRssiSensor("wifi_rssi", HASensorNumber::PrecisionP0);
 
 bool otaEnabled = false;
 bool otaInProgress = false;
 unsigned long otaDeadline = 0;
 unsigned long portalStartedAt = 0;
 String deviceHostname;
+String deviceChipId;
+String friendlyName;
 String otaPassword;
 String mqttBrokerHost;
 String mqttBrokerUser;
@@ -183,8 +192,9 @@ void setup() {
     Start WiFiSettings & Arduino OTA
   **********************************************************/
   char chipId[7];
-  snprintf(chipId, sizeof(chipId), "%06X", ESP.getChipId());
-  deviceHostname = String(HOSTNAME_PREFIX) + chipId;
+  snprintf(chipId, sizeof(chipId), "%06x", ESP.getChipId());
+  deviceChipId = chipId;
+  deviceHostname = String(HOSTNAME_PREFIX) + deviceChipId;
 
   WiFiSettings.hostname = deviceHostname;
   WiFiSettings.secure = true;
@@ -200,6 +210,7 @@ void setup() {
     }
   };
 
+  friendlyName = WiFiSettings.string("weather_friendly_name", 1, 64, deviceHostname.c_str(), "Friendly name");
   httpPort = WiFiSettings.integer("weather_http_port", 8080, "HTTP port");
   otaPassword = WiFiSettings.string("weather_ota_password", 8, 64, WIFI_SETTINGS_PASSWORD, "OTA password");
   mqttBrokerHost = WiFiSettings.string("weather_mqtt_broker", 1, 64, "", "MQTT broker address");
@@ -265,9 +276,9 @@ void setup() {
   deviceUniqueId[1] = (numericChipId >> 8) & 0xFF;
   deviceUniqueId[2] = numericChipId & 0xFF;
   device.setUniqueId(deviceUniqueId, sizeof(deviceUniqueId));
-  device.setName(deviceHostname.c_str());
+  device.setName(friendlyName.c_str());
   device.setManufacturer("Woody");
-  device.setModel("HomeBrew");
+  device.setModel(HARDWARE_MODEL);
   device.setSoftwareVersion(FIRMWARE_VERSION);
 
   temperature.setIcon("mdi:sun-thermometer");
@@ -303,8 +314,23 @@ void setup() {
   otaStatus.setIcon("mdi:update");
   firmwareVersion.setName("Firmware Version");
   firmwareVersion.setIcon("mdi:information-outline");
+  chipIdSensor.setName("Chip ID");
+  chipIdSensor.setIcon("mdi:identifier");
+  macAddressSensor.setName("Wi-Fi MAC Address");
+  macAddressSensor.setIcon("mdi:network-outline");
+  ipAddressSensor.setName("IP Address");
+  ipAddressSensor.setIcon("mdi:ip-network-outline");
+  hostnameSensor.setName("Hostname");
+  hostnameSensor.setIcon("mdi:web");
+  resetReasonSensor.setName("Reset Reason");
+  resetReasonSensor.setIcon("mdi:restart-alert");
+  wifiRssiSensor.setName("Wi-Fi RSSI");
+  wifiRssiSensor.setIcon("mdi:wifi");
+  wifiRssiSensor.setUnitOfMeasurement("dBm");
 
   mqtt.setDataPrefix("weather_station");
+  device.enableSharedAvailability();
+  device.enableLastWill();
   mqtt.onConnected(onMqttConnected);
   mqtt.begin(mqttBrokerAddress, PORT, mqttBrokerUser.c_str(), mqttBrokerPass.c_str());
 

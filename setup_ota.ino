@@ -8,7 +8,14 @@ void publishOtaStatus(const char* status) {
 }
 
 void onMqttConnected() {
+  device.setAvailability(true);
   firmwareVersion.setValue(FIRMWARE_VERSION);
+  chipIdSensor.setValue(deviceChipId.c_str());
+  macAddressSensor.setValue(WiFi.macAddress().c_str());
+  ipAddressSensor.setValue(WiFi.localIP().toString().c_str());
+  hostnameSensor.setValue(deviceHostname.c_str());
+  resetReasonSensor.setValue(ESP.getResetReason().c_str());
+  wifiRssiSensor.setValue(WiFi.RSSI());
   publishOtaStatus(otaEnabled ? "ready" : "standby");
 }
 
