@@ -39,6 +39,39 @@ The firmware must support multiple ESP8266 weather stations without MQTT
 discovery, entity, hostname, or OTA collisions. Static names such as
 `ESP_Weather_Station` must not be used as the device's unique identity.
 
+### MQTT naming contract
+
+Use a stable, product-specific MQTT hierarchy. The topic identifies the product,
+the individual ESP8266, the entity, and the message type:
+
+```text
+weather_station/<chip-id>/<entity>/<topic-type>
+```
+
+For a station whose chip ID is `541a1d`, examples are:
+
+```text
+weather_station/541a1d/temperature/stat_t
+weather_station/541a1d/humidity/stat_t
+weather_station/541a1d/ota_status/stat_t
+weather_station/541a1d/enable_ota/cmd_t
+```
+
+Naming rules:
+
+- Use `weather_station` as the ArduinoHA MQTT data prefix.
+- Use the lowercase, six-character ESP8266 chip ID as the per-device topic
+  segment.
+- Use stable lowercase `snake_case` ArduinoHA entity IDs.
+- Use `weather-<chip-id>` as the Wi-Fi, mDNS, and ArduinoOTA hostname.
+- Keep `homeassistant` as the Home Assistant MQTT discovery prefix.
+- Publish numeric sensor values as payloads; publish units through discovery
+  metadata rather than embedding values or units in topic names.
+- Treat the complete `weather_station/<chip-id>` path as the product-plus-hardware
+  MQTT identity. ArduinoHA uses its device unique ID as the second data-topic
+  segment, so the chip ID must occupy that segment to produce this exact topic
+  hierarchy without modifying the library.
+
 ### Identity values
 
 Derive a stable identity during startup from hardware rather than source code:
@@ -188,8 +221,8 @@ Home Assistant retained request
 ## Implementation checkpoints
 
 - [ ] Finish updating Arduino IDE, ESP8266 board support, and libraries.
-- [ ] Restore Arduino CLI visibility of the installed ESP8266 core.
-- [ ] Confirm the updated sketch compiles with ArduinoHA.
+- [x] Restore Arduino CLI visibility of the installed ESP8266 core.
+- [x] Confirm the updated sketch compiles with ArduinoHA.
 - [x] Add basic firmware-version reporting.
 - [ ] Replace the static device ID and hostname with hardware-derived values.
 - [ ] Publish chip ID, MAC address, IP address, hostname, and firmware version
