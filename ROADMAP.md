@@ -229,7 +229,8 @@ Home Assistant retained request
       as Home Assistant diagnostic entities.
 - [ ] Verify two devices can connect simultaneously without MQTT discovery,
       entity, hostname, or OTA collisions.
-- [ ] Implement and test the non-sleeping OTA button and status handshake.
+- [x] Implement the non-sleeping OTA button and status handshake.
+- [ ] Test the non-sleeping OTA button and status handshake on hardware.
 - [ ] Verify timeout, authentication failure, interrupted upload, and reboot
       behavior.
 - [ ] Add expiring retained requests when deep sleep is implemented.

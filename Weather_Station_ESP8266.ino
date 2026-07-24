@@ -24,10 +24,11 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.4.1"
+#define FIRMWARE_VERSION "0.4.2"
 #define HARDWARE_MODEL "ESP8266 Weather Station"
 #define OTA_WINDOW_MS 120000UL
 #define PORTAL_RESET_MS 900000UL
+#define MQTT_RESTART_MS 300000UL
 
 #include <LittleFS.h>
 #include <FS.h>
@@ -57,6 +58,8 @@ void report_task();
 void setup_ota();
 void onOtaButton(HAButton *);
 void onMqttConnected();
+void onMqttDisconnected();
+void expireOtaWindow();
 bool resolveMqttBroker();
 void IRAM_ATTR anemometer_isr();
 float get_wind_dir();
@@ -105,6 +108,9 @@ bool otaEnabled = false;
 bool otaInProgress = false;
 unsigned long otaDeadline = 0;
 unsigned long portalStartedAt = 0;
+unsigned long mqttDisconnectedAt = 0;
+String otaState = "standby";
+bool sensorTasksPaused = false;
 String deviceHostname;
 String deviceChipId;
 String friendlyName;
@@ -332,6 +338,7 @@ void setup() {
   device.enableSharedAvailability();
   device.enableLastWill();
   mqtt.onConnected(onMqttConnected);
+  mqtt.onDisconnected(onMqttDisconnected);
   mqtt.begin(mqttBrokerAddress, PORT, mqttBrokerUser.c_str(), mqttBrokerPass.c_str());
 
   /****************************************************************************/
@@ -346,13 +353,13 @@ void loop() {
 
   if (otaEnabled) {
     ArduinoOTA.handle();
-
-    if (!otaInProgress && static_cast<long>(millis() - otaDeadline) >= 0) {
-      otaEnabled = false;
-      otaStatus.setValue("timeout");
-      Serial.println(F("OTA window expired"));
-    }
+    expireOtaWindow();
   }
 
-  delay(10);
+  if (!mqtt.isConnected() && mqttDisconnectedAt != 0 &&
+      static_cast<int32_t>(millis() - mqttDisconnectedAt) >= static_cast<int32_t>(MQTT_RESTART_MS)) {
+    Serial.println(F("MQTT unavailable for 5 minutes; restarting to resolve broker again"));
+    Serial.flush();
+    ESP.restart();
+  }
 }
