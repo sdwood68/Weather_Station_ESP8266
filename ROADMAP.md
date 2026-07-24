@@ -224,7 +224,7 @@ Home Assistant retained request
 - [x] Restore Arduino CLI visibility of the installed ESP8266 core.
 - [x] Confirm the updated sketch compiles with ArduinoHA.
 - [x] Add basic firmware-version reporting.
-- [ ] Replace the static device ID and hostname with hardware-derived values.
+- [x] Replace the static device ID and hostname with hardware-derived values.
 - [ ] Publish chip ID, MAC address, IP address, hostname, and firmware version
       as Home Assistant diagnostic entities.
 - [ ] Verify two devices can connect simultaneously without MQTT discovery,

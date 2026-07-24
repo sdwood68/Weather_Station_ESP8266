@@ -24,7 +24,7 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.3.2"
+#define FIRMWARE_VERSION "0.4.0"
 #define OTA_WINDOW_MS 120000UL
 #define PORTAL_RESET_MS 900000UL
 
@@ -82,17 +82,17 @@ HAMqtt mqtt(client, device);
 IPAddress server_ip;
 uint16_t port_number;
 
-HASensorNumber temperature("Temperature", HASensorNumber::PrecisionP1);
-HASensorNumber humidity("Humidity", HASensorNumber::PrecisionP1);
-HASensorNumber airPressure("AirPressure", HASensorNumber::PrecisionP3);
-HASensorNumber windSpeed("WindSpeed", HASensorNumber::PrecisionP2);
-HASensorNumber windGust("WindGust", HASensorNumber::PrecisionP2);
-HASensorNumber windMagnitude("WindMagnitude", HASensorNumber::PrecisionP2);
-HASensorNumber windDirection("WindDirection", HASensorNumber::PrecisionP1);
-HASensorNumber boxTemperature("BoxTemperature", HASensorNumber::PrecisionP1);
-HAButton otaButton("EnableOTA");
-HASensor otaStatus("OTAStatus");
-HASensor firmwareVersion("FirmwareVersion");
+HASensorNumber temperature("temperature", HASensorNumber::PrecisionP1);
+HASensorNumber humidity("humidity", HASensorNumber::PrecisionP1);
+HASensorNumber airPressure("air_pressure", HASensorNumber::PrecisionP3);
+HASensorNumber windSpeed("wind_speed", HASensorNumber::PrecisionP2);
+HASensorNumber windGust("wind_gust", HASensorNumber::PrecisionP2);
+HASensorNumber windMagnitude("wind_magnitude", HASensorNumber::PrecisionP2);
+HASensorNumber windDirection("wind_direction", HASensorNumber::PrecisionP1);
+HASensorNumber boxTemperature("box_temperature", HASensorNumber::PrecisionP1);
+HAButton otaButton("enable_ota");
+HASensor otaStatus("ota_status");
+HASensor firmwareVersion("firmware_version");
 
 bool otaEnabled = false;
 bool otaInProgress = false;
@@ -104,7 +104,7 @@ String mqttBrokerHost;
 String mqttBrokerUser;
 String mqttBrokerPass;
 IPAddress mqttBrokerAddress;
-byte deviceUniqueId[6];
+byte deviceUniqueId[3];
 
 BMP280_SDW bmp280;    // I2C Address 0x77
 AHT20 aht20;          // I2C Address 0x38
@@ -260,7 +260,10 @@ void setup() {
   /****************************************************************************/
   /* HOME ASSISTANT MQTT STUFF                                                */
   /****************************************************************************/
-  WiFi.macAddress(deviceUniqueId);
+  const uint32_t numericChipId = ESP.getChipId();
+  deviceUniqueId[0] = (numericChipId >> 16) & 0xFF;
+  deviceUniqueId[1] = (numericChipId >> 8) & 0xFF;
+  deviceUniqueId[2] = numericChipId & 0xFF;
   device.setUniqueId(deviceUniqueId, sizeof(deviceUniqueId));
   device.setName(deviceHostname.c_str());
   device.setManufacturer("Woody");
@@ -301,6 +304,7 @@ void setup() {
   firmwareVersion.setName("Firmware Version");
   firmwareVersion.setIcon("mdi:information-outline");
 
+  mqtt.setDataPrefix("weather_station");
   mqtt.onConnected(onMqttConnected);
   mqtt.begin(mqttBrokerAddress, PORT, mqttBrokerUser.c_str(), mqttBrokerPass.c_str());
 
