@@ -24,7 +24,7 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.4.3"
+#define FIRMWARE_VERSION "0.5.0"
 #define HARDWARE_MODEL "ESP8266 Weather Station"
 #define OTA_WINDOW_MS 120000UL
 #define PORTAL_RESET_MS 900000UL
@@ -33,6 +33,8 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include <ArduinoOTA.h>
+#include <ArduinoJson.h>
+#include <time.h>
 #include <WiFiSettings.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -59,6 +61,9 @@ void setup_ota();
 void onOtaButton(HAButton *);
 void onMqttConnected();
 void onMqttDisconnected();
+void onMqttMessage(const char* topic, const uint8_t* payload, uint16_t length);
+void openOtaWindow();
+void processPendingOtaRequest();
 void expireOtaWindow();
 bool resolveMqttBroker();
 void IRAM_ATTR anemometer_isr();
@@ -114,6 +119,9 @@ bool sensorTasksPaused = false;
 String deviceHostname;
 String deviceChipId;
 String friendlyName;
+String otaRequestTopic;
+String otaRequestStatusTopic;
+String pendingOtaRequest;
 String otaPassword;
 String mqttBrokerHost;
 String mqttBrokerUser;
@@ -201,6 +209,8 @@ void setup() {
   snprintf(chipId, sizeof(chipId), "%06x", ESP.getChipId());
   deviceChipId = chipId;
   deviceHostname = String(HOSTNAME_PREFIX) + deviceChipId;
+  otaRequestTopic = String("weather_station/") + deviceChipId + "/ota/request";
+  otaRequestStatusTopic = String("weather_station/") + deviceChipId + "/ota/status";
 
   WiFiSettings.hostname = deviceHostname;
   WiFiSettings.secure = true;
@@ -240,6 +250,7 @@ void setup() {
   WiFiSettings.connect(true, 60);
 
   // ArduinoOTA initializes the ESP8266 mDNS responder used by the fallback.
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   setup_ota();
 
   if (!resolveMqttBroker()) {
@@ -335,10 +346,12 @@ void setup() {
   wifiRssiSensor.setUnitOfMeasurement("dBm");
 
   mqtt.setDataPrefix("weather_station");
+  mqtt.setBufferSize(512);
   device.enableSharedAvailability();
   device.enableLastWill();
   mqtt.onConnected(onMqttConnected);
   mqtt.onDisconnected(onMqttDisconnected);
+  mqtt.onMessage(onMqttMessage);
   mqtt.begin(mqttBrokerAddress, PORT, mqttBrokerUser.c_str(), mqttBrokerPass.c_str());
 
   /****************************************************************************/

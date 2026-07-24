@@ -173,7 +173,7 @@ therefore be checked during each normal sensor wake cycle.
 ### Sleep-compatible OTA request
 
 1. Home Assistant publishes an expiring, retained request to a dedicated topic,
-   such as `weather_station/ota/request`.
+   such as `weather_station/<chip-id>/ota/request`.
 2. The station wakes on its normal sensor schedule, connects to Wi-Fi and MQTT,
    publishes its readings, and briefly waits for commands.
 3. If no valid request arrives, it returns to deep sleep.
@@ -233,5 +233,5 @@ Home Assistant retained request
 - [ ] Test the non-sleeping OTA button and status handshake on hardware.
 - [ ] Verify timeout, authentication failure, interrupted upload, and reboot
       behavior.
-- [ ] Add expiring retained requests when deep sleep is implemented.
+- [x] Add device-specific expiring retained OTA requests in preparation for deep sleep.
 - [ ] Evaluate signed firmware enforcement before relying on remote OTA.

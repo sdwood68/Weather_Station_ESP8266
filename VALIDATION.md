@@ -66,3 +66,39 @@ Do not publish an empty retained message to a wildcard topic; MQTT deletion must
 target each concrete retained topic or be performed through a broker browser.
 After cleanup, restart MQTT discovery or reload the MQTT integration in Home
 Assistant if stale entities remain.
+## Firmware 0.5.0 retained OTA request
+
+Validated on COM6 after flashing firmware 0.5.0:
+
+- Flash completed and the image hash was verified.
+- Device rebooted as `weather-541a1d` and rejoined Wi-Fi.
+- Home Assistant/broker mDNS resolution succeeded.
+- MQTT connected and diagnostic publication callback ran.
+- No configuration password was printed to serial.
+- BMP280/AHT20 and scheduled weather reporting remained operational.
+
+The request parser and topic subscription compile and boot successfully. Publishing
+live retained test requests still requires broker credentials or a Home Assistant
+automation and has not been claimed as a completed failure-path test.
+
+Request topic and status topic:
+
+```text
+weather_station/541a1d/ota/request
+weather_station/541a1d/ota/status
+```
+
+Example request:
+
+```json
+{
+  "requested": true,
+  "expires": 1784563200,
+  "target_version": "0.5.1"
+}
+```
+
+The firmware clears an accepted retained request before opening the OTA window.
+Malformed, expired, and already-running-version requests do not enable OTA. If
+NTP has not synchronized yet, the request is held in RAM and evaluated when a
+valid clock becomes available.

@@ -5,6 +5,7 @@
 void publishOtaStatus(const char* status) {
   otaState = status;
   otaStatus.setValue(otaState.c_str());
+  mqtt.publish(otaRequestStatusTopic.c_str(), otaState.c_str(), true);
 }
 
 void pauseSensorTasks() {
@@ -38,7 +39,9 @@ void onMqttConnected() {
   hostnameSensor.setValue(deviceHostname.c_str());
   resetReasonSensor.setValue(ESP.getResetReason().c_str());
   wifiRssiSensor.setValue(WiFi.RSSI());
+  mqtt.subscribe(otaRequestTopic.c_str());
   otaStatus.setValue(otaState.c_str());
+  mqtt.publish(otaRequestStatusTopic.c_str(), otaState.c_str(), true);
 }
 
 void onMqttDisconnected() {
@@ -47,11 +50,9 @@ void onMqttDisconnected() {
   }
 }
 
-void onOtaButton(HAButton* sender) {
-  (void)sender;
-
+void openOtaWindow() {
   if (otaInProgress) {
-    Serial.println(F("Ignoring OTA command while an update is in progress"));
+    Serial.println(F("Ignoring OTA request while an update is in progress"));
     return;
   }
 
@@ -59,6 +60,81 @@ void onOtaButton(HAButton* sender) {
   otaDeadline = millis() + OTA_WINDOW_MS;
   publishOtaStatus("ready");
   Serial.println(F("OTA enabled for 120 seconds"));
+}
+
+void onOtaButton(HAButton* sender) {
+  (void)sender;
+  openOtaWindow();
+}
+
+void onMqttMessage(const char* topic, const uint8_t* payload, uint16_t length) {
+  if (strcmp(topic, otaRequestTopic.c_str()) != 0) {
+    return;
+  }
+
+  if (length == 0 || length > 384) {
+    Serial.println(F("Rejected OTA request with invalid payload length"));
+    return;
+  }
+
+  JsonDocument request;
+  const DeserializationError parseError = deserializeJson(request, payload, length);
+  if (parseError) {
+    Serial.printf("Rejected malformed OTA request: %s\n", parseError.c_str());
+    return;
+  }
+
+  const bool requested = request["requested"] | false;
+  const time_t expires = request["expires"] | 0;
+  const char* targetVersion = request["target_version"] | "";
+  const time_t now = time(nullptr);
+
+  if (!requested || targetVersion[0] == '\0') {
+    Serial.println(F("Rejected incomplete OTA request"));
+    return;
+  }
+
+  if (now < 1700000000) {
+    pendingOtaRequest = "";
+    pendingOtaRequest.reserve(length);
+    for (uint16_t i = 0; i < length; ++i) {
+      pendingOtaRequest += static_cast<char>(payload[i]);
+    }
+    Serial.println(F("Deferring OTA request until the clock is synchronized"));
+    return;
+  }
+
+  if (expires <= now) {
+    Serial.println(F("Discarding expired retained OTA request"));
+    mqtt.publish(otaRequestTopic.c_str(), "", true);
+    return;
+  }
+
+  if (strcmp(targetVersion, FIRMWARE_VERSION) == 0) {
+    Serial.println(F("Clearing OTA request because target version is already running"));
+    mqtt.publish(otaRequestTopic.c_str(), "", true);
+    return;
+  }
+
+  if (!mqtt.publish(otaRequestTopic.c_str(), "", true)) {
+    Serial.println(F("Could not clear retained OTA request; OTA will remain disabled"));
+    return;
+  }
+
+  Serial.printf("Accepted OTA request for firmware %s\n", targetVersion);
+  openOtaWindow();
+}
+void processPendingOtaRequest() {
+  if (pendingOtaRequest.length() == 0 || time(nullptr) < 1700000000) {
+    return;
+  }
+
+  String request = pendingOtaRequest;
+  pendingOtaRequest = "";
+  onMqttMessage(
+      otaRequestTopic.c_str(),
+      reinterpret_cast<const uint8_t*>(request.c_str()),
+      request.length());
 }
 
 void expireOtaWindow() {
