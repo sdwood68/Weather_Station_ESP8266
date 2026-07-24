@@ -198,10 +198,10 @@ void setup() {
 
   temperature.setIcon("mdi:sun-thermometer");
   temperature.setName("Outside temp");
-  temperature.setUnitOfMeasurement("F");
+  temperature.setUnitOfMeasurement("°F");
   humidity.setIcon("mdi:water-percent");
   humidity.setName("Outside Humidity");
-  humidity.setUnitOfMeasurement("%RH");
+  humidity.setUnitOfMeasurement("%");
   airPressure.setIcon("mdi:gauge");
   airPressure.setName("Air Pressure");
   airPressure.setUnitOfMeasurement("kPa");
@@ -216,10 +216,10 @@ void setup() {
   windMagnitude.setUnitOfMeasurement("mph");
   windDirection.setIcon("mdi:sun-compass");
   windDirection.setName("Wind Direction");
-  windDirection.setUnitOfMeasurement("degree");
+  windDirection.setUnitOfMeasurement("°");
   boxTemperature.setIcon("mdi:thermometer");
   boxTemperature.setName("Internal Temp");
-  boxTemperature.setUnitOfMeasurement("F");
+  boxTemperature.setUnitOfMeasurement("°F");
 
   otaButton.setName("Enable OTA");
   otaButton.setIcon("mdi:update");
