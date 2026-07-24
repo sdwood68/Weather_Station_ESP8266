@@ -24,8 +24,9 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.2.0"
+#define FIRMWARE_VERSION "0.3.1"
 #define OTA_WINDOW_MS 120000UL
+#define PORTAL_RESET_MS 900000UL
 
 #include <LittleFS.h>
 #include <FS.h>
@@ -55,6 +56,7 @@ void report_task();
 void setup_ota();
 void onOtaButton(HAButton *);
 void onMqttConnected();
+bool resolveMqttBroker();
 void IRAM_ATTR anemometer_isr();
 float get_wind_dir();
 
@@ -71,12 +73,11 @@ Task report (REPORT_PERIOD, TASK_FOREVER, &report_task, &ts, true);
 /************************************************/
 /* ArduinoHA Stuff                              */
 /************************************************/
-#define HOSTNAME "ESP_Weather_Station"
-#define MQTT_BROKER_ADDR IPAddress(192,168,12,163)
+#define HOSTNAME_PREFIX "weather-"
 #define PORT 1883
 #define TARGET_HOSTNAME "WoodHA"
 WiFiClient client;
-HADevice device(HOSTNAME);
+HADevice device;
 HAMqtt mqtt(client, device);
 IPAddress server_ip;
 uint16_t port_number;
@@ -96,9 +97,14 @@ HASensor firmwareVersion("FirmwareVersion");
 bool otaEnabled = false;
 bool otaInProgress = false;
 unsigned long otaDeadline = 0;
+unsigned long portalStartedAt = 0;
+String deviceHostname;
 String otaPassword;
+String mqttBrokerHost;
 String mqttBrokerUser;
 String mqttBrokerPass;
+IPAddress mqttBrokerAddress;
+byte deviceUniqueId[6];
 
 BMP280_SDW bmp280;    // I2C Address 0x77
 AHT20 aht20;          // I2C Address 0x38
@@ -111,6 +117,34 @@ bool bAht20 = false;
 int httpPort = 0;
 FSInfo fs_info;
 
+
+bool resolveMqttBroker() {
+  if (mqttBrokerAddress.fromString(mqttBrokerHost)) {
+    Serial.printf("MQTT broker configured as IP: %s\n",
+                  mqttBrokerAddress.toString().c_str());
+    return true;
+  }
+
+  if (WiFi.hostByName(mqttBrokerHost.c_str(), mqttBrokerAddress, 5000) == 1) {
+    Serial.printf("MQTT broker resolved by DNS: %s -> %s\n",
+                  mqttBrokerHost.c_str(),
+                  mqttBrokerAddress.toString().c_str());
+    return true;
+  }
+
+  const int serviceCount = MDNS.queryService("home-assistant", "tcp");
+  if (serviceCount > 0) {
+    mqttBrokerAddress = MDNS.IP(0);
+    Serial.printf("Home Assistant found by mDNS: %s -> %s\n",
+                  MDNS.hostname(0).c_str(),
+                  mqttBrokerAddress.toString().c_str());
+    return true;
+  }
+
+  Serial.printf("Unable to resolve MQTT broker: %s\n",
+                mqttBrokerHost.c_str());
+  return false;
+}
 
 void setup() {
   Serial.begin(115200); 
@@ -146,19 +180,54 @@ void setup() {
   Serial.printf("ESP Flash Chip Size: %4.1f kBytes\n", (float(ESP.getFlashChipSize()) / 1024));
 
   /**********************************************************
-    Start WifiSettings & Ardiono OTA
+    Start WiFiSettings & Arduino OTA
   **********************************************************/
-  WiFiSettings.hostname = HOSTNAME;
-  httpPort = WiFiSettings.integer("HTTP_Port", 8080);
-  otaPassword = WiFiSettings.string("OTA_Password", WIFI_SETTINGS_PASSWORD);
-  mqttBrokerUser = WiFiSettings.string("MQTT_User", MQTT_BROKER_USER);
-  mqttBrokerPass = WiFiSettings.string("MQTT_Password", MQTT_BROKER_PASS);
-  WiFiSettings.password = otaPassword;
+  char chipId[7];
+  snprintf(chipId, sizeof(chipId), "%06X", ESP.getChipId());
+  deviceHostname = String(HOSTNAME_PREFIX) + chipId;
 
+  WiFiSettings.hostname = deviceHostname;
   WiFiSettings.secure = true;
-  WiFiSettings.connect(true, 30);
+  WiFiSettings.onPortal = []() {
+    portalStartedAt = millis();
+    Serial.println(F("Configuration portal will restart in 15 minutes"));
+  };
+  WiFiSettings.onPortalWaitLoop = []() {
+    if (millis() - portalStartedAt >= PORTAL_RESET_MS) {
+      Serial.println(F("Configuration portal timed out; restarting"));
+      Serial.flush();
+      ESP.restart();
+    }
+  };
 
+  httpPort = WiFiSettings.integer("weather_http_port", 8080, "HTTP port");
+  otaPassword = WiFiSettings.string("weather_ota_password", 8, 64, WIFI_SETTINGS_PASSWORD, "OTA password");
+  mqttBrokerHost = WiFiSettings.string("weather_mqtt_broker", 1, 64, "", "MQTT broker address");
+  mqttBrokerUser = WiFiSettings.string("weather_mqtt_user", 1, 64, MQTT_BROKER_USER, "MQTT username");
+  mqttBrokerPass = WiFiSettings.string("weather_mqtt_password", 1, 64, MQTT_BROKER_PASS, "MQTT password");
+
+  Serial.printf("Configuration portal SSID: %s\n", WiFiSettings.hostname.c_str());
+  Serial.printf("Configuration portal password: %s\n", WiFiSettings.password.c_str());
+
+  const bool configurationMissing =
+      otaPassword.length() == 0 ||
+      mqttBrokerHost.length() == 0 ||
+      mqttBrokerUser.length() == 0 ||
+      mqttBrokerPass.length() == 0;
+
+  if (configurationMissing) {
+    Serial.println(F("Required configuration is missing; starting portal"));
+    WiFiSettings.portal();
+  }
+
+  WiFiSettings.connect(true, 60);
+
+  // ArduinoOTA initializes the ESP8266 mDNS responder used by the fallback.
   setup_ota();
+
+  if (!resolveMqttBroker()) {
+    Serial.println(F("MQTT will retry after the next restart"));
+  }
 
   /***************************************************************************/
   /* Sensor Initialization                                                   */
@@ -191,7 +260,9 @@ void setup() {
   /****************************************************************************/
   /* HOME ASSISTANT MQTT STUFF                                                */
   /****************************************************************************/
-  device.setName(HOSTNAME);
+  WiFi.macAddress(deviceUniqueId);
+  device.setUniqueId(deviceUniqueId, sizeof(deviceUniqueId));
+  device.setName(deviceHostname.c_str());
   device.setManufacturer("Woody");
   device.setModel("HomeBrew");
   device.setSoftwareVersion(FIRMWARE_VERSION);
@@ -231,7 +302,7 @@ void setup() {
   firmwareVersion.setIcon("mdi:information-outline");
 
   mqtt.onConnected(onMqttConnected);
-  mqtt.begin(MQTT_BROKER_ADDR, PORT, mqttBrokerUser.c_str(), mqttBrokerPass.c_str());
+  mqtt.begin(mqttBrokerAddress, PORT, mqttBrokerUser.c_str(), mqttBrokerPass.c_str());
 
   /****************************************************************************/
   /*   Start the Scheduler                                                    */
