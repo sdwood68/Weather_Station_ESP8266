@@ -4,6 +4,8 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-25
+
 ### Added
 
 - Began firmware 0.7.0 standards-based wind reporting.
