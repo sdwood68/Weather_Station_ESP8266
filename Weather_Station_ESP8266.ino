@@ -38,8 +38,10 @@
 #include "AHT20_SDW.h"
 #include <Adafruit_AM2315.h>
 #include <TaskScheduler.h>
-#include <Coordinates.h>
 #include <ArduinoHA.h>
+#include "wind_calculations.h"
+#include "pressure_calculations.h"
+#include "temperature_calculations.h"
 
 #define LED_PIN       14    // GPIO14
 #define RAIN_PIN      12    // GPIO12
@@ -53,6 +55,7 @@ void wind_task();
 void report_task();
 void setup_ota();
 void onOtaButton(HAButton *);
+void onStationElevationCommand(HANumeric, HANumber*);
 void onMqttConnected();
 void onMqttDisconnected();
 void onMqttMessage(const char* topic, const uint8_t* payload, uint16_t length);
@@ -67,11 +70,20 @@ float get_wind_dir();
 /************************************************/
 /*   Task Scheduler Related Stuff               */
 /************************************************/
-#define WIND_PERIOD 5000  // Wind calaculation every 5 seconds
-#define REPORT_PERIOD 120000 // Report weather conditions every 2 minutes
-#define RECORDS REPORT_PERIOD/WIND_PERIOD
+#define WIND_SAMPLE_PERIOD_MS 1000UL
+#define WIND_OBSERVATION_PERIOD_MS 120000UL
+#define WIND_GUST_PERIOD_MS 3000UL
+#define REPORT_PERIOD WIND_OBSERVATION_PERIOD_MS
+#define PRESSURE_HISTORY_SAMPLES (43200000UL / REPORT_PERIOD)
+#define PRESSURE_TENDENCY_SAMPLES (10800000UL / REPORT_PERIOD)
+#define UNCONFIGURED_ELEVATION_METERS -10000L
+#define RECORDS (WIND_OBSERVATION_PERIOD_MS / WIND_SAMPLE_PERIOD_MS)
+#define GUST_RECORDS (WIND_GUST_PERIOD_MS / WIND_SAMPLE_PERIOD_MS)
+#define ANEMOMETER_MPH_PER_HZ 1.492f
+#define CALM_THRESHOLD_MPH 2.3f
+#define WIND_DIRECTION_OFFSET_DEGREES 0.0f
 Scheduler ts;
-Task wind (WIND_PERIOD, TASK_FOREVER, &wind_task, &ts, true);
+Task wind (WIND_SAMPLE_PERIOD_MS, TASK_FOREVER, &wind_task, &ts, true);
 Task report (REPORT_PERIOD, TASK_FOREVER, &report_task, &ts, true);
 
 /************************************************/
@@ -88,11 +100,20 @@ uint16_t port_number;
 
 HASensorNumber temperature("temperature", HASensorNumber::PrecisionP1);
 HASensorNumber humidity("humidity", HASensorNumber::PrecisionP1);
+HASensorNumber dewPoint("dew_point", HASensorNumber::PrecisionP1);
+HASensorNumber heatIndex("heat_index", HASensorNumber::PrecisionP1);
 HASensorNumber airPressure("air_pressure", HASensorNumber::PrecisionP3);
+HASensorNumber altimeterSetting("altimeter_setting", HASensorNumber::PrecisionP2);
+HASensorNumber seaLevelPressure("sea_level_pressure", HASensorNumber::PrecisionP2);
+HASensorNumber pressureChange3h("pressure_change_3h", HASensorNumber::PrecisionP1);
+HASensor pressureTrend("pressure_trend");
+HANumber stationElevationControl("station_elevation", HANumber::PrecisionP0);
 HASensorNumber windSpeed("wind_speed", HASensorNumber::PrecisionP2);
 HASensorNumber windGust("wind_gust", HASensorNumber::PrecisionP2);
-HASensorNumber windMagnitude("wind_magnitude", HASensorNumber::PrecisionP2);
 HASensorNumber windDirection("wind_direction", HASensorNumber::PrecisionP1);
+HASensorNumber windPulseCount("wind_pulse_count", HASensorNumber::PrecisionP0);
+HASensorNumber windSampleCount("wind_sample_count", HASensorNumber::PrecisionP0);
+HASensorNumber windGustPulseCount("wind_gust_pulse_count", HASensorNumber::PrecisionP0);
 HASensorNumber boxTemperature("box_temperature", HASensorNumber::PrecisionP1);
 HAButton otaButton("enable_ota");
 HASensor otaStatus("ota_status");
@@ -135,9 +156,45 @@ bool bBmp280 = false;
 bool bAht20 = false;
 
 int httpPort = 0;
+long stationElevationMeters = 0;
+long pressureOffsetPa = 0;
 FSInfo fs_info;
 
 
+
+void onStationElevationCommand(HANumeric number, HANumber* sender) {
+  if (!number.isSet()) {
+    Serial.println(F("Rejected empty station-elevation command"));
+    return;
+  }
+
+  const int32_t requestedElevation =
+      static_cast<int32_t>(roundf(number.toFloat()));
+  if (requestedElevation < -500 || requestedElevation > 9000) {
+    Serial.printf("Rejected station elevation outside -500..9000 m: %ld\n",
+                  static_cast<long>(requestedElevation));
+    return;
+  }
+
+  File elevationFile = LittleFS.open("/weather_station_elevation_m", "w");
+  if (!elevationFile) {
+    Serial.println(F("Unable to persist station elevation"));
+    return;
+  }
+
+  const String elevationValue(requestedElevation);
+  const size_t written = elevationFile.print(elevationValue);
+  elevationFile.close();
+  if (written != elevationValue.length()) {
+    Serial.println(F("Incomplete station-elevation write; command rejected"));
+    return;
+  }
+
+  stationElevationMeters = requestedElevation;
+  sender->setState(requestedElevation, true);
+  Serial.printf("Station elevation updated from Home Assistant: %ld m\n",
+                static_cast<long>(stationElevationMeters));
+}
 bool resolveMqttBroker() {
   mqttBrokerAddress = IPAddress();
 
@@ -246,6 +303,12 @@ void setup() {
 
   friendlyName = WiFiSettings.string("weather_friendly_name", 1, 64, deviceHostname.c_str(), "Friendly name");
   httpPort = WiFiSettings.integer("weather_http_port", 8080, "HTTP port");
+  stationElevationMeters = WiFiSettings.integer(
+      "weather_station_elevation_m", -500, 9000, UNCONFIGURED_ELEVATION_METERS,
+      "Station elevation above mean sea level (m)");
+  pressureOffsetPa = WiFiSettings.integer(
+      "weather_pressure_offset_pa", -5000, 5000, 0,
+      "BMP280 calibration offset (Pa)");
   otaPassword = WiFiSettings.string("weather_ota_password", 8, 64, WIFI_SETTINGS_PASSWORD, "OTA password");
   mqttBrokerHost = WiFiSettings.string("weather_mqtt_broker", 1, 64, "", "MQTT broker address");
   mqttBrokerUser = WiFiSettings.string("weather_mqtt_user", 1, 64, MQTT_BROKER_USER, "MQTT username");
@@ -320,21 +383,57 @@ void setup() {
   humidity.setIcon("mdi:water-percent");
   humidity.setName("Outside Humidity");
   humidity.setUnitOfMeasurement("%");
+  dewPoint.setIcon("mdi:water-thermometer");
+  dewPoint.setName("Dew Point");
+  dewPoint.setUnitOfMeasurement("°F");
+  heatIndex.setIcon("mdi:sun-thermometer");
+  heatIndex.setName("Heat Index");
+  heatIndex.setUnitOfMeasurement("°F");
   airPressure.setIcon("mdi:gauge");
-  airPressure.setName("Air Pressure");
+  airPressure.setName("Station Pressure");
   airPressure.setUnitOfMeasurement("kPa");
+  altimeterSetting.setIcon("mdi:gauge");
+  altimeterSetting.setName("Altimeter Setting");
+  altimeterSetting.setUnitOfMeasurement("hPa");
+  seaLevelPressure.setIcon("mdi:gauge");
+  seaLevelPressure.setName("Sea-Level Pressure");
+  seaLevelPressure.setUnitOfMeasurement("hPa");
+  pressureChange3h.setIcon("mdi:chart-timeline-variant");
+  pressureChange3h.setName("3-Hour Pressure Change");
+  pressureChange3h.setUnitOfMeasurement("hPa");
+  pressureTrend.setIcon("mdi:trending-up");
+  pressureTrend.setName("3-Hour Pressure Trend");
+  stationElevationControl.setIcon("mdi:elevation-rise");
+  stationElevationControl.setName("Station Elevation");
+  stationElevationControl.setUnitOfMeasurement("m");
+  stationElevationControl.setMode(HANumber::ModeBox);
+  stationElevationControl.setMin(-500.0f);
+  stationElevationControl.setMax(9000.0f);
+  stationElevationControl.setStep(1.0f);
+  stationElevationControl.setRetain(false);
+  stationElevationControl.setOptimistic(false);
+  stationElevationControl.onCommand(onStationElevationCommand);
+  if (stationElevationMeters != UNCONFIGURED_ELEVATION_METERS) {
+    stationElevationControl.setCurrentState(static_cast<int32_t>(stationElevationMeters));
+  }
   windSpeed.setIcon("mdi:weather-windy");
-  windSpeed.setName("Wind Speed");
+  windSpeed.setName("2-Minute Sustained Wind Speed");
   windSpeed.setUnitOfMeasurement("mph");
   windGust.setIcon("mdi:weather-windy");
-  windGust.setName("Wind Gust");
+  windGust.setName("3-Second Wind Gust");
   windGust.setUnitOfMeasurement("mph");
-  windMagnitude.setIcon("mdi:weather-windy");
-  windMagnitude.setName("Wind Magnitude");
-  windMagnitude.setUnitOfMeasurement("mph");
   windDirection.setIcon("mdi:sun-compass");
-  windDirection.setName("Wind Direction");
+  windDirection.setName("2-Minute True Wind Direction");
   windDirection.setUnitOfMeasurement("°");
+  windPulseCount.setIcon("mdi:counter");
+  windPulseCount.setName("2-Minute Wind Pulse Count");
+  windPulseCount.setUnitOfMeasurement("pulses");
+  windSampleCount.setIcon("mdi:counter");
+  windSampleCount.setName("Wind Sample Count");
+  windSampleCount.setUnitOfMeasurement("samples");
+  windGustPulseCount.setIcon("mdi:counter");
+  windGustPulseCount.setName("3-Second Gust Pulse Count");
+  windGustPulseCount.setUnitOfMeasurement("pulses");
   boxTemperature.setIcon("mdi:thermometer");
   boxTemperature.setName("Internal Temp");
   boxTemperature.setUnitOfMeasurement("°F");

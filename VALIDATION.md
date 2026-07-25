@@ -259,3 +259,114 @@ confirming the running version and expected post-reboot state. Shared MQTT
 availability is configured as entity/device availability metadata rather than a
 standalone Home Assistant sensor, so no separate `online` entity is expected;
 entity availability or the retained availability topic must be inspected instead.
+
+### Initial 0.7.0 wind implementation — 2026-07-25
+
+The standards-based wind implementation compiled successfully with ESP8266 core
+3.1.2 for both supported profiles:
+
+- `esp8266:esp8266:nodemcuv2`
+- `esp8266:esp8266:d1_mini`
+
+Both builds used 37,760 bytes (47%) of RAM, 62,491 bytes (95%) of instruction
+RAM, and 385,564 bytes (36%) of flash. Existing `BMP280_SDW` ambiguous
+`Wire.requestFrom` overload warnings remain; no new wind-code warnings occurred.
+
+Pending before firmware version promotion: execute the host test-vector binary,
+perform pulse-generator and vane-position validation, compare against a
+calibrated field reference, and confirm the new Home Assistant entities on both
+physical stations.
+### Initial 0.7.0 pressure implementation — 2026-07-25
+
+The NWS-guided station pressure, altimeter setting, temperature-dependent
+sea-level pressure, three-hour pressure change, and pressure trend implementation
+compiled successfully for `esp8266:esp8266:nodemcuv2` and
+`esp8266:esp8266:d1_mini`. The final D1 Mini build used 40,664 bytes (50%) of
+RAM, 62,491 bytes (95%) of instruction RAM, and 390,564 bytes (37%) of flash.
+Existing `BMP280_SDW` ambiguous `Wire.requestFrom` warnings remain; the new
+pressure code produced no warnings.
+
+The pressure calculation test harness compiles with the installed ESP8266 C++
+toolchain. Its formula vectors were independently evaluated, including the NWS
+altimeter equation at Denver elevation and sea-level/elevated hypsometric cases.
+Execution on a native host and physical validation against a calibrated pressure
+reference remain pending. Reduced pressures will not publish until station
+elevation is explicitly configured; sea-level pressure additionally requires 12
+hours of valid AM2315 outdoor-temperature history. Three-hour change and trend
+require 90 two-minute pressure samples.
+### Initial 0.7.0 dew-point and heat-index implementation — 2026-07-25
+
+The outdoor AM2315 dew-point and complete NWS heat-index implementation compiled
+successfully for `esp8266:esp8266:nodemcuv2` and
+`esp8266:esp8266:d1_mini`. Both builds used 40,984 bytes (51%) of RAM,
+62,491 bytes (95%) of instruction RAM, and 392,676 bytes (37%) of flash.
+Existing `BMP280_SDW` warnings remain; the new calculations produced no compiler
+warnings.
+
+The platform-independent test harness compiles with the ESP8266 C++ toolchain.
+Reference-vector evaluation produced 23.93 C dew point at 30 C/70% RH and
+105.92 F heat index at 90 F/70% RH. Physical comparison remains pending and
+requires the currently failing AM2315 to be restored or replaced.
+### Initial 0.7.0 feature-test OTA upload — 2026-07-25
+
+Station `541a1d` advertised an authenticated ArduinoOTA window at
+`192.168.12.192`. Arduino CLI's implicit host-interface selection produced
+`No Answer` before transfer, so the installed ESP8266 `espota.py` uploader was
+bound explicitly to LAN address `192.168.12.165`. Authentication completed,
+the full 434,704-byte NodeMCU image transferred, and the station returned
+`Result: OK`.
+
+The station did not reconnect after the OTA-triggered reboot. After one physical
+power cycle it recovered at `192.168.12.192`; six of six ICMP replies succeeded
+with zero packet loss. A subsequent Arduino CLI discovery scan showed no network
+port, confirming that the temporary OTA service was closed. The image still
+reports firmware `0.6.0` because the repository release checklist defers the
+`0.7.0` version promotion until physical feature validation succeeds.
+
+Pending investigation: capture serial boot output during a future OTA reboot to
+determine why this image required a physical power cycle. Pending feature
+validation: configure elevation and pressure correction, restore or replace the
+AM2315, observe the new Home Assistant entities, validate injected wind pulses
+and vane positions, and accumulate the three-hour and twelve-hour histories.
+### Home Assistant station-elevation control — 2026-07-25
+
+Added a non-retained `station_elevation` Home Assistant number entity with a
+range of -500 through 9000 meters and one-meter steps. Commands are validated,
+persisted to `/weather_station_elevation_m` in LittleFS, applied immediately to
+altimeter and sea-level pressure calculations, and acknowledged through the
+number state topic. The altimeter setting itself remains derived rather than
+manually overridden.
+
+The change compiled successfully for `esp8266:esp8266:nodemcuv2` and
+`esp8266:esp8266:d1_mini`. Both builds used 41,324 bytes (51%) of RAM, 62,491
+bytes (95%) of instruction RAM, and 394,780 bytes (37%) of flash. Hardware and
+Home Assistant command/persistence testing remain pending; this build was not
+uploaded automatically because the preceding OTA reboot required a physical
+power cycle.
+### Station-elevation control OTA deployment — 2026-07-25
+
+The Home Assistant `station_elevation` control build was compiled for NodeMCU
+1.0 and uploaded to station `541a1d` at `192.168.12.192` with authenticated
+ArduinoOTA. The uploader was bound explicitly to host LAN address
+`192.168.12.165`; authentication succeeded and the 100% transfer completed with
+exit code zero.
+
+Unlike the preceding feature-test upload, this OTA reboot recovered without a
+physical power cycle. The station answered on the second recovery probe and
+remained reachable; subsequent discovery showed no network port, confirming
+that the temporary OTA service closed. Home Assistant command, immediate
+recalculation, and reboot persistence tests remain pending.
+### Derived-temperature invalid-read safety — 2026-07-25
+
+A transient heat-index value above 2,500,000 exposed that the AM2315 transaction
+result was not checked before its output variables were reused. The read path now
+starts with fresh non-finite values, requires a successful transaction, enforces
+the AM2315 rated temperature and humidity ranges, and suppresses invalid results.
+The calculation layer independently rejects non-finite inputs and heat-index
+results outside -100 through 250 F.
+
+Regression vectors cover the observed multi-million-degree input, non-finite
+values, and an extreme Rothfusz result. The test harness cross-compiles with the
+ESP8266 toolchain. NodeMCU 1.0 and D1 Mini builds both succeeded at 41,404
+bytes RAM (51%), 62,491 bytes instruction RAM (95%), and 395,348 bytes flash
+(37%); only the pre-existing BMP280_SDW Wire overload warnings remain.

@@ -4,6 +4,28 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Began firmware 0.7.0 standards-based wind reporting.
+- Added two-minute sustained wind, two-minute speed-weighted true direction,
+  rolling three-second gust, calm handling, and pulse/sample diagnostics.
+- Added platform-independent wind calculation test vectors and a calibration and
+  field-validation procedure.
+- Added calibrated station pressure, NWS altimeter setting, temperature-adjusted
+  sea-level pressure, three-hour pressure change, and rising/falling/steady trend
+  reporting with calculation test vectors and validation guidance.
+- Added outdoor dew point using the Magnus approximation and NWS heat index
+  using the complete simple/Rothfusz/adjustment procedure.
+- Added a persistent Home Assistant Station Elevation control for the derived
+  altimeter and sea-level pressure calculations, and documented wind sample-count
+  diagnostics.
+
+### Fixed
+
+- Prevented invalid or failed AM2315 reads from entering dew-point and heat-index
+  calculations, and added finite, sensor-range, and hard output bounds so corrupt
+  heat-index values can never be published.
+
 ### Changed
 
 - Began firmware 0.6.0 OTA production-hardening work.
@@ -17,6 +39,8 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
 
 ### Verified
 
+- Compiled the initial 0.7.0 wind implementation for NodeMCU 1.0 and
+  LOLIN(WEMOS) D1 R2 & mini profiles with ESP8266 core 3.1.2.
 - Authenticated direct-IP OTA upload to station `541a1d`, including the expected
   reboot, network recovery, and closure of the temporary OTA service.
 ### Pending
@@ -28,6 +52,12 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
 - Evaluate signed firmware enforcement for remote OTA updates.
 
 ## [0.5.2] - 2026-07-24
+
+### Fixed
+
+- Prevented invalid or failed AM2315 reads from entering dew-point and heat-index
+  calculations, and added finite, sensor-range, and hard output bounds so corrupt
+  heat-index values can never be published.
 
 ### Changed
 
@@ -95,6 +125,12 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
 
 ## [0.4.2] - 2026-07-23
 
+### Fixed
+
+- Prevented invalid or failed AM2315 reads from entering dew-point and heat-index
+  calculations, and added finite, sensor-range, and hard output bounds so corrupt
+  heat-index values can never be published.
+
 ### Changed
 
 - Hardened OTA handling into persistent `standby`, `ready`, `updating`,
@@ -115,6 +151,12 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
 - Hardware model and improved Home Assistant device metadata.
 
 ## [0.4.0] - 2026-07-23
+
+### Fixed
+
+- Prevented invalid or failed AM2315 reads from entering dew-point and heat-index
+  calculations, and added finite, sensor-range, and hard output bounds so corrupt
+  heat-index values can never be published.
 
 ### Changed
 
@@ -147,6 +189,12 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
   cannot connect within one minute.
 - Fifteen-minute portal reset timer.
 - DNS and mDNS MQTT broker resolution.
+
+### Fixed
+
+- Prevented invalid or failed AM2315 reads from entering dew-point and heat-index
+  calculations, and added finite, sensor-range, and hard output bounds so corrupt
+  heat-index values can never be published.
 
 ### Changed
 
