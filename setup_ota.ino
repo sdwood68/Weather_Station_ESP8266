@@ -59,7 +59,7 @@ void openOtaWindow() {
   otaEnabled = true;
   otaDeadline = millis() + OTA_WINDOW_MS;
   publishOtaStatus("ready");
-  Serial.println(F("OTA enabled for 120 seconds"));
+  Serial.printf("OTA enabled for %lu seconds\n", OTA_WINDOW_MS / 1000UL);
 }
 
 void onOtaButton(HAButton* sender) {

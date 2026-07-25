@@ -220,18 +220,97 @@ Home Assistant retained request
 
 ## Implementation checkpoints
 
-- [ ] Finish updating Arduino IDE, ESP8266 board support, and libraries.
+### Completed
+
 - [x] Restore Arduino CLI visibility of the installed ESP8266 core.
 - [x] Confirm the updated sketch compiles with ArduinoHA.
-- [x] Add basic firmware-version reporting.
-- [x] Replace the static device ID and hostname with hardware-derived values.
-- [x] Publish chip ID, MAC address, IP address, hostname, and firmware version
-      as Home Assistant diagnostic entities.
-- [ ] Verify two devices can connect simultaneously without MQTT discovery,
-      entity, hostname, or OTA collisions.
-- [x] Implement the non-sleeping OTA button and status handshake.
-- [ ] Test the non-sleeping OTA button and status handshake on hardware.
-- [ ] Verify timeout, authentication failure, interrupted upload, and reboot
-      behavior.
+- [x] Add firmware-version reporting and Home Assistant device metadata.
+- [x] Replace static identity and hostname values with hardware-derived values.
+- [x] Adopt `weather_station/<chip-id>/<entity>/<topic-type>` and lowercase
+      `snake_case` entity IDs.
+- [x] Add a configurable friendly device name without changing immutable identity.
+- [x] Publish chip ID, MAC address, IP address, hostname, reset reason, RSSI, and
+      firmware version as Home Assistant diagnostic entities.
+- [x] Add shared MQTT availability and a retained offline last will.
+- [x] Implement the non-sleeping OTA button and status state machine.
+- [x] Suspend sensor tasks during OTA and restore them after an OTA error.
 - [x] Add device-specific expiring retained OTA requests in preparation for deep sleep.
-- [ ] Evaluate signed firmware enforcement before relying on remote OTA.
+- [x] Compile, flash, hash-verify, and boot-test firmware 0.5.0 on the COM6 ESP8266.
+- [x] Document Home Assistant topic migration and current hardware validation.
+
+### Release 0.5.3 - Configuration and connectivity reliability (Priority 1)
+
+- [ ] Finish updating Arduino IDE, ESP8266 board support, and libraries.
+- [ ] Add manual SSID entry to the ESP-WiFiSettings configuration portal so a
+      freshly erased device can be configured for a hidden network. Prefer a
+      small extension to the current library over migrating the complete portal.
+      AutoConnect supports manual/hidden SSID entry, but its latest release was
+      1.4.2 on 2023-01-31 and its most recent repository commit was 2023-02-22,
+      so it is not considered actively maintained.
+- [ ] Verify missing-configuration portal entry and the 15-minute portal reset.
+- [ ] Make MQTT broker resolution resilient: retry configured DNS and mDNS
+      without starting MQTT with `0.0.0.0`, log each resolution path, and use a
+      DHCP reservation or router-provided local DNS name as the recommended
+      production configuration.
+- [ ] Diagnose the AM2315 initialization failure on the current hardware.
+
+Exit criteria: both board profiles compile; a flash-erased NodeMCU can be
+configured using either a scanned or manually entered SSID; broker-resolution
+failure recovers without exposing an unnecessary AP; portal timeout is verified.
+
+### Release 0.6.0 - OTA production hardening (Priority 2)
+
+- [x] Test the non-sleeping OTA button and status handshake through Home Assistant, including a successful Arduino IDE OTA upload.
+- [ ] Verify OTA timeout, authentication failure, interrupted upload, successful
+      reboot, and running-version confirmation.
+- [ ] Diagnose Arduino IDE network-port discovery that leaves
+      `{upload.port.properties.port}` unresolved, and document direct-IP Arduino
+      CLI upload as the supported fallback.
+- [ ] Evaluate and, if practical, enforce signed firmware before relying on
+      unattended remote OTA.
+
+Exit criteria: a Home Assistant request can target either physical device, the
+authenticated update completes and reports the new version, interruption is
+recoverable, and the supported IDE/CLI procedure is documented.
+
+### Release 0.7.0 - Standards-based wind reporting (Priority 3)
+
+- [ ] Review the wind-speed, vector, direction, and gust calculations against
+      current NOAA/NWS and American Meteorological Society practices.
+- [ ] Define sampling, averaging, calm-wind, gust-duration, and reporting
+      intervals explicitly, including how the two-minute MQTT report relates to
+      the standards-based observation periods.
+- [ ] Implement the selected calculations and publish enough diagnostic data to
+      validate them against captured anemometer pulses.
+- [ ] Document calibration constants and a repeatable bench/field validation
+      procedure.
+
+Exit criteria: formulas and intervals are documented with primary references,
+test vectors pass, and Home Assistant reports clearly named standards-based wind
+measurements.
+
+### Release 0.8.0 - Radio power reduction and sleep readiness (Priority 4)
+
+- [ ] Measure baseline current consumption during sensing, Wi-Fi connection, MQTT
+      publication, idle time, and OTA readiness.
+- [ ] Turn off or modem-sleep the Wi-Fi radio between reporting events while
+      preserving continuous anemometer pulse counting and reliable reconnects.
+- [ ] Measure connection latency and energy savings before selecting the final
+      radio duty cycle.
+- [ ] Validate the retained, expiring OTA-request workflow across a radio-off or
+      sleep/wake cycle.
+- [ ] Evaluate full deep sleep separately: the ESP8266 cannot count wind pulses
+      or receive MQTT while asleep, so it requires external pulse-counting/wake
+      hardware or an explicitly accepted loss of wind observations.
+
+Exit criteria: measured power savings and operational tradeoffs are documented;
+sensor reporting, MQTT availability, and OTA requests recover reliably after each
+radio-off interval.
+
+### Release process for every firmware version
+
+- [ ] Increment `FIRMWARE_VERSION` only after compilation and target-device
+      validation succeed.
+- [ ] Update `CHANGELOG.md`, validation evidence, and completed roadmap items.
+- [ ] Compile both NodeMCU and D1 Mini profiles when shared code changes.
+- [ ] Commit only after the applicable release exit criteria pass.

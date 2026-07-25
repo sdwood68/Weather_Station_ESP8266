@@ -102,3 +102,81 @@ The firmware clears an accepted retained request before opening the OTA window.
 Malformed, expired, and already-running-version requests do not enable OTA. If
 NTP has not synchronized yet, the request is held in RAM and evaluated when a
 valid clock becomes available.
+## Two-device validation
+
+Validated two physical ESP8266 stations operating simultaneously on 2026-07-24:
+
+| Chip ID | MAC address | IP address | Hostname | MQTT |
+| --- | --- | --- | --- | --- |
+| `541a1d` | `48:3f:da:54:1a:1d` | `192.168.12.192` | `weather-541a1d` | Existing station online |
+| `af47f7` | `e0:98:06:af:47:f7` | `192.168.12.161` | `weather-af47f7` | Connection confirmed by serial log |
+
+Both devices replied to three simultaneous reachability checks with zero packet
+loss, and the ARP table associated each IP address with the expected distinct
+MAC address. The second station resolved the MQTT broker through mDNS and logged
+`MQTT connected; publishing discovery and diagnostics` while the first station
+remained reachable.
+
+Their firmware-derived namespaces are distinct:
+
+```text
+weather_station/541a1d/#
+weather_station/af47f7/#
+```
+
+Their Wi-Fi/mDNS/ArduinoOTA hostnames and ArduinoHA discovery device IDs are also
+derived from those different chip IDs, so no hostname, MQTT data-topic, OTA, or
+discovery identity collision was observed. The second board has no sensors
+attached; BMP280, AHT20, and AM2315 initialization failures are expected on that
+test unit, while MQTT diagnostics and zero-value wind reporting remain active.
+## Item 5 MQTT and OTA validation
+
+Validated against both physical stations on 2026-07-24 using retained broker
+state and the sensorless `af47f7` unit for disruptive tests:
+
+- Both devices published firmware `0.5.0` and retained `online` availability under
+  separate `weather_station/<chip-id>/...` namespaces.
+- Home Assistant retained discovery contained 16 sensor configurations and one
+  `enable_ota` button for each device ID, with no overlapping discovery topics.
+- A malformed retained OTA request did not enable OTA and remained available for
+  diagnosis until explicitly cleared.
+- A valid request for target `0.5.1` was accepted, cleared from the retained
+  request topic, and changed status from `standby` to `ready`.
+- With no upload, the 120-second window changed status from `ready` to `timeout`.
+- An already-running `0.5.0` request and an expired `0.5.1` request were both
+  cleared without reopening OTA; status remained `timeout`.
+- An abrupt serial reflash produced retained availability transitions
+  `online -> offline -> online`, confirming MQTT last-will behavior.
+- A deliberately incorrect OTA password was rejected by the network uploader;
+  the device published `error`, remained online, and did not affect `541a1d`.
+
+Still requiring explicit credentials or destructive configuration changes:
+
+- Successful authenticated OTA upload and running-version confirmation.
+- Interrupted authenticated OTA upload and recovery.
+- Home Assistant UI button press (the retained MQTT request path is validated).
+- Missing-configuration portal entry and 15-minute reset after clearing settings.
+## Firmware 0.5.1 Home Assistant identity fix
+
+The initial two-device broker test exposed a Home Assistant registry collision:
+discovery topics were device-specific, but ArduinoHA published unqualified entity
+unique IDs such as `firmware_version` for both devices. Home Assistant could
+therefore ignore or merge the second station even though MQTT topics were separate.
+
+Firmware 0.5.1 enables ArduinoHA extended unique IDs. Verified retained discovery
+examples are now:
+
+```text
+541a1d_firmware_version
+af47f7_firmware_version
+```
+
+Both COM5 and COM6 were flashed and hash-verified. The broker subsequently
+reported firmware `0.5.1`, `online` availability, and distinct discovery payloads
+for both devices.
+## Firmware 0.5.2 OTA window
+
+A clean Arduino CLI build took 103 seconds. The OTA window was increased to 480
+seconds: twice the 120-second reporting period plus twice a rounded two-minute
+compile allowance. Both COM5 and COM6 were flashed and hash-verified, then
+confirmed online while reporting firmware `0.5.2`.

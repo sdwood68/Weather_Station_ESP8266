@@ -24,9 +24,10 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.5.0"
+#define FIRMWARE_VERSION "0.5.2"
 #define HARDWARE_MODEL "ESP8266 Weather Station"
-#define OTA_WINDOW_MS 120000UL
+#define OTA_COMPILE_BUDGET_MS 120000UL
+#define OTA_WINDOW_MS 480000UL  // 2x report period + 2x compile budget
 #define PORTAL_RESET_MS 900000UL
 #define MQTT_RESTART_MS 300000UL
 
@@ -293,6 +294,7 @@ void setup() {
   deviceUniqueId[1] = (numericChipId >> 8) & 0xFF;
   deviceUniqueId[2] = numericChipId & 0xFF;
   device.setUniqueId(deviceUniqueId, sizeof(deviceUniqueId));
+  device.enableExtendedUniqueIds();
   device.setName(friendlyName.c_str());
   device.setManufacturer("Woody");
   device.setModel(HARDWARE_MODEL);
