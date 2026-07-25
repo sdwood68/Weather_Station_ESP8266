@@ -6,15 +6,22 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
 
 ### Changed
 
-- Began firmware 0.5.3 and made MQTT startup wait for a valid broker address.
+- Began firmware 0.6.0 OTA production-hardening work.
+- Made MQTT startup wait for a valid broker address.
 - Retry configured-IP, DNS, and mDNS broker resolution every 30 seconds instead
   of starting ArduinoHA with `0.0.0.0` or waiting for a device restart.
 - Added serial diagnostics for deferred MQTT startup and the selected broker
   address.
+- Documented direct-IP Arduino CLI upload as the fallback when Arduino IDE
+  network-port discovery leaves `{upload.port.properties.port}` unresolved.
 
+### Verified
+
+- Authenticated direct-IP OTA upload to station `541a1d`, including the expected
+  reboot, network recovery, and closure of the temporary OTA service.
 ### Pending
 
-- Complete authenticated OTA success/interruption and portal-reset testing.
+- Complete authenticated OTA interruption and portal-reset testing.
 - Verify hidden-network manual SSID entry and the broker-resolution recovery path
   on physical hardware.
 - Diagnose the AM2315 initialization failure seen on the current hardware.

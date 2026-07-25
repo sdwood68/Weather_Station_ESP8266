@@ -263,7 +263,7 @@ failure recovers without exposing an unnecessary AP; portal timeout is verified.
 - [x] Test the non-sleeping OTA button and status handshake through Home Assistant, including a successful Arduino IDE OTA upload.
 - [ ] Verify OTA timeout, authentication failure, interrupted upload, successful
       reboot, and running-version confirmation.
-- [ ] Diagnose Arduino IDE network-port discovery that leaves
+- [x] Diagnose Arduino IDE network-port discovery that leaves
       `{upload.port.properties.port}` unresolved, and document direct-IP Arduino
       CLI upload as the supported fallback.
 - [ ] Evaluate and, if practical, enforce signed firmware before relying on

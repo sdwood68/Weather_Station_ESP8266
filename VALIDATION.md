@@ -180,3 +180,82 @@ A clean Arduino CLI build took 103 seconds. The OTA window was increased to 480
 seconds: twice the 120-second reporting period plus twice a rounded two-minute
 compile allowance. Both COM5 and COM6 were flashed and hash-verified, then
 confirmed online while reporting firmware `0.5.2`.
+
+## Firmware 0.6.0 OTA upload procedure
+
+Start each update by targeting exactly one station through its Home Assistant
+**Enable OTA** button or its retained request topic. Confirm that the selected
+station reports `ready` before uploading.
+
+Arduino IDE network discovery may list `weather-<chip-id>` while still leaving
+`{upload.port.properties.port}` unresolved. The supported fallback is a direct-IP
+Arduino CLI upload:
+
+```powershell
+arduino-cli compile --fqbn esp8266:esp8266:d1_mini Weather_Station_ESP8266
+arduino-cli upload --fqbn esp8266:esp8266:d1_mini `
+  --protocol network `
+  --port 192.168.12.192 `
+  --upload-field password="<OTA password>" `
+  Weather_Station_ESP8266
+```
+
+Replace the IP address, board FQBN, and password for the selected station. Keep
+the password out of shell history when possible. If the installed Arduino CLI
+does not accept `--upload-field`, use a temporary environment variable or the
+IDE password prompt supported by the installed ESP8266 core rather than adding
+the credential to this repository.
+
+For every OTA attempt, record the device chip ID, source and target versions,
+upload method, and observed status sequence. A successful update is not complete
+until the station reboots, reconnects to MQTT, publishes `online`, and reports
+firmware `0.6.0`. After an authentication or transfer error, confirm that status
+is `error`, sensor tasks resume, MQTT remains usable, and a new OTA request can
+open another window.
+### Initial 0.6.0 hardware results — 2026-07-25
+
+Validated on the sensor-equipped station attached to COM6:
+
+- Both `esp8266:esp8266:d1_mini` and `esp8266:esp8266:nodemcuv2` profiles compiled
+  successfully with ESP8266 core 3.1.2.
+- Serial upload to chip ID `541a1d` (MAC `48:3f:da:54:1a:1d`) completed and the
+  flashed image hash was verified.
+- Before the upload, a controlled reboot confirmed Wi-Fi at `192.168.12.192`,
+  broker resolution at `192.168.12.163`, MQTT connection, BMP280/AHT20 readings,
+  and scheduled weather reporting.
+- After the upload, the station recovered at `192.168.12.192` with four of four
+  ICMP replies and zero packet loss.
+- Arduino CLI 1.3.1 accepts `--upload-field password=...`, confirming the
+  documented direct-IP command syntax.
+- `arduino-cli board list --discovery-timeout 10s` exposed COM1 and COM6 but no
+  network port, reproducing the network-discovery failure for
+  `weather-541a1d`.
+- A direct-IP upload without `--protocol network` incorrectly selected the serial
+  `esptool.py` recipe; the documented command now selects the OTA recipe explicitly.
+- With `--protocol network`, the station answered the OTA authentication exchange
+  but rejected the supplied credential. The installed ESP8266 3.1.2 upload recipe
+  confirms that Arduino CLI field `password` maps to `espota.py --auth`; the
+  station's stored OTA password therefore differs from the tested value.
+- Anonymous reads of retained MQTT version, availability, and OTA status were
+  rejected by the broker as expected; authenticated retained-state confirmation
+  remains pending.
+
+Still pending: authenticated direct-IP OTA upload, retained `0.6.0` version and
+`online` confirmation, OTA timeout, interrupted-transfer recovery, and signed
+firmware evaluation.
+### Authenticated 0.6.0 OTA success — 2026-07-25
+
+After station `541a1d` reported `ready`, Arduino CLI uploaded by direct IP with
+`--protocol network` and the configured OTA password. Authentication completed
+with `OK` and the complete image transferred successfully. The password was
+supplied only to the uploader and was not written to the repository.
+
+The first post-upload ping timed out during the expected reboot. The following
+nine replies confirmed recovery at `192.168.12.192`. A subsequent five-second
+Arduino CLI discovery scan exposed no network port, confirming that the temporary
+OTA service closed after reboot. Home Assistant subsequently reported firmware
+`0.6.0` and OTA status `standby`,
+confirming the running version and expected post-reboot state. Shared MQTT
+availability is configured as entity/device availability metadata rather than a
+standalone Home Assistant sensor, so no separate `online` entity is expected;
+entity availability or the retained availability topic must be inspected instead.

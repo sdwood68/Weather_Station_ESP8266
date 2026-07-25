@@ -12,19 +12,11 @@
 /*  Tools/Board: LOLIN(WEMOS) D1 R2 & mini                                   */
 /*****************************************************************************/
 
-/*
- * CREDENTIAL REMINDERS - intentionally commented out and not compiled.
- * Replace the empty active values below from a secure, untracked source.
- *
- * #define WIFI_SETTINGS_PASSWORD "12345678"
- * #define MQTT_BROKER_USER "HA_MQTT"
- * #define MQTT_BROKER_PASS "public"
- */
 #define WIFI_SETTINGS_PASSWORD ""
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.5.3"
+#define FIRMWARE_VERSION "0.6.0"
 #define HARDWARE_MODEL "ESP8266 Weather Station"
 #define OTA_COMPILE_BUDGET_MS 120000UL
 #define OTA_WINDOW_MS 480000UL  // 2x report period + 2x compile budget
