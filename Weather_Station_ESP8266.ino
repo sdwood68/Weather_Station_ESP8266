@@ -24,11 +24,12 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.5.2"
+#define FIRMWARE_VERSION "0.5.3"
 #define HARDWARE_MODEL "ESP8266 Weather Station"
 #define OTA_COMPILE_BUDGET_MS 120000UL
 #define OTA_WINDOW_MS 480000UL  // 2x report period + 2x compile budget
 #define PORTAL_RESET_MS 900000UL
+#define MQTT_RESOLVE_RETRY_MS 30000UL
 #define MQTT_RESTART_MS 300000UL
 
 #include <LittleFS.h>
@@ -67,6 +68,7 @@ void openOtaWindow();
 void processPendingOtaRequest();
 void expireOtaWindow();
 bool resolveMqttBroker();
+bool startMqtt();
 void IRAM_ATTR anemometer_isr();
 float get_wind_dir();
 
@@ -115,6 +117,8 @@ bool otaInProgress = false;
 unsigned long otaDeadline = 0;
 unsigned long portalStartedAt = 0;
 unsigned long mqttDisconnectedAt = 0;
+unsigned long mqttResolveRetryAt = 0;
+bool mqttStarted = false;
 String otaState = "standby";
 bool sensorTasksPaused = false;
 String deviceHostname;
@@ -143,6 +147,8 @@ FSInfo fs_info;
 
 
 bool resolveMqttBroker() {
+  mqttBrokerAddress = IPAddress();
+
   if (mqttBrokerAddress.fromString(mqttBrokerHost)) {
     Serial.printf("MQTT broker configured as IP: %s\n",
                   mqttBrokerAddress.toString().c_str());
@@ -159,15 +165,34 @@ bool resolveMqttBroker() {
   const int serviceCount = MDNS.queryService("home-assistant", "tcp");
   if (serviceCount > 0) {
     mqttBrokerAddress = MDNS.IP(0);
-    Serial.printf("Home Assistant found by mDNS: %s -> %s\n",
-                  MDNS.hostname(0).c_str(),
-                  mqttBrokerAddress.toString().c_str());
-    return true;
+    if (mqttBrokerAddress != IPAddress()) {
+      Serial.printf("Home Assistant found by mDNS: %s -> %s\n",
+                    MDNS.hostname(0).c_str(),
+                    mqttBrokerAddress.toString().c_str());
+      return true;
+    }
+
+    Serial.println(F("mDNS returned an invalid 0.0.0.0 broker address"));
   }
 
   Serial.printf("Unable to resolve MQTT broker: %s\n",
                 mqttBrokerHost.c_str());
   return false;
+}
+
+bool startMqtt() {
+  if (!resolveMqttBroker()) {
+    mqttResolveRetryAt = millis() + MQTT_RESOLVE_RETRY_MS;
+    Serial.println(F("MQTT start deferred; broker resolution will retry in 30 seconds"));
+    return false;
+  }
+
+  Serial.printf("Starting MQTT with broker %s:%u\n",
+                mqttBrokerAddress.toString().c_str(), PORT);
+  mqtt.begin(mqttBrokerAddress, PORT, mqttBrokerUser.c_str(), mqttBrokerPass.c_str());
+  mqttStarted = true;
+  mqttDisconnectedAt = millis();
+  return true;
 }
 
 void setup() {
@@ -254,9 +279,6 @@ void setup() {
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   setup_ota();
 
-  if (!resolveMqttBroker()) {
-    Serial.println(F("MQTT will retry after the next restart"));
-  }
 
   /***************************************************************************/
   /* Sensor Initialization                                                   */
@@ -354,7 +376,7 @@ void setup() {
   mqtt.onConnected(onMqttConnected);
   mqtt.onDisconnected(onMqttDisconnected);
   mqtt.onMessage(onMqttMessage);
-  mqtt.begin(mqttBrokerAddress, PORT, mqttBrokerUser.c_str(), mqttBrokerPass.c_str());
+  startMqtt();
 
   /****************************************************************************/
   /*   Start the Scheduler                                                    */
@@ -363,7 +385,11 @@ void setup() {
 }
  
 void loop() {
-  mqtt.loop();
+  if (mqttStarted) {
+    mqtt.loop();
+  } else if (static_cast<int32_t>(millis() - mqttResolveRetryAt) >= 0) {
+    startMqtt();
+  }
   ts.execute();
 
   if (otaEnabled) {
@@ -371,7 +397,7 @@ void loop() {
     expireOtaWindow();
   }
 
-  if (!mqtt.isConnected() && mqttDisconnectedAt != 0 &&
+  if (mqttStarted && !mqtt.isConnected() && mqttDisconnectedAt != 0 &&
       static_cast<int32_t>(millis() - mqttDisconnectedAt) >= static_cast<int32_t>(MQTT_RESTART_MS)) {
     Serial.println(F("MQTT unavailable for 5 minutes; restarting to resolve broker again"));
     Serial.flush();
