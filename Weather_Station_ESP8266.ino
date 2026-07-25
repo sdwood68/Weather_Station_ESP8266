@@ -16,7 +16,7 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.6.0"
+#define FIRMWARE_VERSION "0.7.0"
 #define HARDWARE_MODEL "ESP8266 Weather Station"
 #define OTA_COMPILE_BUDGET_MS 120000UL
 #define OTA_WINDOW_MS 480000UL  // 2x report period + 2x compile budget
