@@ -370,3 +370,70 @@ values, and an extreme Rothfusz result. The test harness cross-compiles with the
 ESP8266 toolchain. NodeMCU 1.0 and D1 Mini builds both succeeded at 41,404
 bytes RAM (51%), 62,491 bytes instruction RAM (95%), and 395,348 bytes flash
 (37%); only the pre-existing BMP280_SDW Wire overload warnings remain.
+
+### Initial 0.9.0 power-baseline instrumentation — 2026-07-25
+
+The existing lifecycle was audited before changing radio behavior. Firmware now
+logs Wi-Fi association duration and the core-selected sleep mode, MQTT connection
+duration, and each two-minute report-task duration using `POWER_BASELINE` serial
+markers. `POWER_BASELINE.md` defines matched electrical measurements for boot,
+association, MQTT discovery, connected idle, sensor reporting, OTA readiness,
+OTA transfer, and network recovery.
+
+The diagnostic build compiled successfully for `esp8266:esp8266:nodemcuv2` and
+`esp8266:esp8266:d1_mini` with ESP8266 core 3.1.2. The NodeMCU build used 41,548
+bytes RAM (51%), 62,491 bytes instruction RAM (95%), and 395,524 bytes flash
+(37%). The D1 Mini build used 41,544 bytes RAM (51%), 62,491 bytes instruction
+RAM (95%), and 395,524 bytes flash (37%). Only the pre-existing BMP280_SDW
+`Wire.requestFrom` overload warnings remain.
+
+Physical current traces are pending. No Wi-Fi sleep mode or duty cycle has been
+selected yet, and the production station has not been updated with this
+diagnostic build.
+### Initial 0.8.0 rain-gauge implementation — 2026-07-26
+
+Rain-gauge GPIO12 now counts falling edges with a 20 ms interrupt debounce and
+processes discrete one-minute tip totals. Each minute uses the ASOS heated-
+tipping-bucket correction `C = A (1 + 0.60A)`, keeps unrounded corrected values
+in a 1,440-minute circular history, and publishes final accumulations rounded to
+0.01 inch. Home Assistant exposes one-minute tips and corrected accumulation,
+latest 60-minute, 3-hour, 6-hour, and 24-hour accumulations, a clearly named
+session total, and a persistent 0.010-10.000 mm/tip calibration control.
+
+The platform-independent rain regression test cross-compiles without warnings
+using the installed ESP8266 C++ toolchain. It covers 0.254 mm and 0.2 mm bucket
+sizes, high-rate correction, hundredth-inch rounding, invalid calibration,
+circular sums, and insufficient-history rejection.
+
+The complete firmware compiled successfully for `esp8266:esp8266:nodemcuv2`
+and `esp8266:esp8266:d1_mini` with ESP8266 core 3.1.2. The NodeMCU build used
+49,128 bytes RAM (61%), 62,555 bytes instruction RAM (95%), and 397,828 bytes
+flash (37%). The D1 Mini build used 49,124 bytes RAM (61%), 62,555 bytes
+instruction RAM (95%), and 397,828 bytes flash (37%). Only the pre-existing
+BMP280_SDW `Wire.requestFrom` overload warnings remain.
+
+Physical switch, controlled-volume, high-rate, history-threshold, persistence,
+and rollover validation remain pending. This build has not been uploaded to a
+station and still advertises firmware 0.7.1 until the 0.8.0 release criteria are
+met.
+
+### Rain and wind-unit OTA deployment — 2026-08-04
+
+The D1 Mini build completed with 49,404 bytes RAM (61%), 62,555 bytes
+instruction RAM (95%), and 399,596 bytes flash (38%). The authenticated
+direct-IP OTA transfer to station 541a1d at 192.168.12.192 completed at
+100% after binding the ESP8266 uploader explicitly to LAN address
+192.168.12.165. The first post-upload ping timed out during reboot; the next
+five replies succeeded, and the temporary OTA service was closed after restart.
+
+### Configuration and resolver reliability - 2026-08-05
+
+The platform-independent connectivity test cross-compiled without warnings. It
+covers missing required fields, the portal timeout boundary, and unsigned
+millis() rollover. NodeMCU and D1 Mini profiles compiled with ESP8266 core
+3.1.2. Each used 49,532 bytes RAM (61%), 62,555 bytes instruction RAM (95%),
+and 400,900 bytes flash (38%). Only the existing BMP280_SDW overload warnings
+remain.
+
+Physical erased-filesystem portal timeout, hidden-network association, and
+DNS/mDNS/broker fault-injection tests remain pending.

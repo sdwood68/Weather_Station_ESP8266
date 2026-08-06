@@ -15,6 +15,7 @@ void pauseSensorTasks() {
 
   wind.disable();
   report.disable();
+  rain.disable();
   sensorTasksPaused = true;
 }
 
@@ -25,12 +26,15 @@ void resumeSensorTasks() {
 
   wind.enable();
   report.enable();
+  rain.enable();
   sensorTasksPaused = false;
 }
 
 void onMqttConnected() {
   mqttDisconnectedAt = 0;
   Serial.println(F("MQTT connected; publishing discovery and diagnostics"));
+  Serial.printf("POWER_BASELINE MQTT connect: %lu ms\n",
+                mqttConnectStartedAt ? millis() - mqttConnectStartedAt : 0UL);
   device.setAvailability(true);
   firmwareVersion.setValue(FIRMWARE_VERSION);
   chipIdSensor.setValue(deviceChipId.c_str());

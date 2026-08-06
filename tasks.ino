@@ -4,6 +4,12 @@ float wind_dir[RECORDS];
 uint16_t wind_idx = 0;
 uint16_t wind_samples = 0;
 volatile unsigned long wind_count = 0;
+volatile uint32_t rain_tip_count = 0;
+volatile uint32_t last_rain_tip_micros = 0;
+float minute_rain_history[RAIN_HISTORY_MINUTES];
+uint16_t rain_history_index = 0;
+uint16_t rain_history_count = 0;
+float rain_session_total_inches = 0.0f;
 float outdoor_temperature_history[PRESSURE_HISTORY_SAMPLES];
 uint16_t pressure_history_index = 0;
 uint16_t pressure_history_count = 0;
@@ -21,6 +27,92 @@ uint16_t pressure_tendency_count = 0;
 /*****************************************************************************/
 void IRAM_ATTR anemometer_isr() {
   wind_count++;
+}
+
+/******************************************************************************/
+/* Rain Gauge Interrupt and ASOS-style one-minute accumulation                */
+/******************************************************************************/
+void IRAM_ATTR rain_gauge_isr() {
+  const uint32_t now = micros();
+  if (static_cast<uint32_t>(now - last_rain_tip_micros) >= RAIN_DEBOUNCE_US) {
+    last_rain_tip_micros = now;
+    rain_tip_count++;
+  }
+}
+
+void resetRainHistory() {
+  noInterrupts();
+  rain_tip_count = 0;
+  last_rain_tip_micros = 0;
+  interrupts();
+
+  for (uint16_t i = 0; i < RAIN_HISTORY_MINUTES; ++i) {
+    minute_rain_history[i] = 0.0f;
+  }
+  rain_history_index = 0;
+  rain_history_count = 0;
+  rain_session_total_inches = 0.0f;
+}
+
+void publishRainWindow(
+    HASensorNumber& sensor,
+    uint16_t minutes,
+    const char* label) {
+  const float total = sumLatestRainInches(
+      minute_rain_history,
+      RAIN_HISTORY_MINUTES,
+      rain_history_index,
+      rain_history_count,
+      minutes);
+  if (!isnan(total)) {
+    const float rounded = roundRainToHundredthInch(total);
+    sensor.setValue(rounded);
+    Serial.printf("%s: %0.2f in\n", label, rounded);
+  } else {
+    Serial.printf("%s pending: %u/%u valid one-minute periods\n",
+                  label,
+                  rain_history_count,
+                  minutes);
+  }
+}
+
+void rain_task() {
+  noInterrupts();
+  const uint32_t capturedTips = rain_tip_count;
+  rain_tip_count = 0;
+  interrupts();
+
+  const float tipSizeMillimeters = rainTipMicrometers / 1000.0f;
+  const float correctedInches =
+      calculateAsosMinuteRainInches(capturedTips, tipSizeMillimeters);
+  if (isnan(correctedInches)) {
+    Serial.println(F("Rain minute rejected: invalid rain-tip calibration"));
+    return;
+  }
+
+  minute_rain_history[rain_history_index] = correctedInches;
+  rain_history_index = (rain_history_index + 1U) % RAIN_HISTORY_MINUTES;
+  if (rain_history_count < RAIN_HISTORY_MINUTES) {
+    rain_history_count++;
+  }
+  rain_session_total_inches += correctedInches;
+
+  const float minuteOutput = roundRainToHundredthInch(correctedInches);
+  rainTipCountSensor.setValue(capturedTips);
+  rainOneMinute.setValue(minuteOutput);
+  rainSessionTotal.setValue(
+      roundRainToHundredthInch(rain_session_total_inches));
+  Serial.printf(
+      "ASOS rain minute: %lu tips at %0.3f in/tip, %0.4f in corrected, %0.2f in reported\n",
+      static_cast<unsigned long>(capturedTips),
+      rainTipMicrometers / 25400.0f,
+      correctedInches,
+      minuteOutput);
+
+  publishRainWindow(rainOneHour, 60, "Latest 60-minute rain");
+  publishRainWindow(rainThreeHour, 180, "Latest 3-hour rain");
+  publishRainWindow(rainSixHour, 360, "Latest 6-hour rain");
+  publishRainWindow(rainTwentyFourHour, 1440, "Latest 24-hour rain");
 }
 
 /*****************************************************************************/
@@ -80,6 +172,7 @@ void wind_task() {
 /*   Broker.                                                                  */
 /******************************************************************************/
 void report_task() {
+  const unsigned long reportStartedAt = millis();
   Serial.println("REPORT_TASK: ");
   float fTemp1 = 0.0; 
   float fTemp2 = 0.0;
@@ -262,8 +355,14 @@ void report_task() {
       ANEMOMETER_MPH_PER_HZ,
       CALM_THRESHOLD_MPH);
 
-  Serial.printf("2-minute sustained wind: %0.2f mph\n", observation.sustainedMph);
-  Serial.printf("3-second wind gust: %0.2f mph\n", observation.gustMph);
+  const float windUnitScale = windSpeedUnitKmh ? 1.609344f : 1.0f;
+  const float reportedSustainedSpeed = observation.sustainedMph * windUnitScale;
+  const float reportedGustSpeed = observation.gustMph * windUnitScale;
+  const char* windUnit = windSpeedUnitKmh ? "km/h" : "mph";
+  Serial.printf("2-minute sustained wind: %0.2f %s\n",
+                reportedSustainedSpeed, windUnit);
+  Serial.printf("3-second wind gust: %0.2f %s\n",
+                reportedGustSpeed, windUnit);
   if (observation.calm) {
     Serial.println(F("2-minute wind direction: calm (0 degrees)"));
   } else {
@@ -275,11 +374,14 @@ void report_task() {
                 observation.sampleCount,
                 observation.gustPulseCount);
 
-  windSpeed.setValue(observation.sustainedMph);
-  windGust.setValue(observation.gustMph);
+  windSpeed.setValue(reportedSustainedSpeed);
+  windGust.setValue(reportedGustSpeed);
   windDirection.setValue(observation.directionDegrees);
   windPulseCount.setValue(observation.pulseCount);
   windSampleCount.setValue(observation.sampleCount);
   windGustPulseCount.setValue(observation.gustPulseCount);
+
+  Serial.printf("POWER_BASELINE report task: %lu ms\n",
+                millis() - reportStartedAt);
 
 }

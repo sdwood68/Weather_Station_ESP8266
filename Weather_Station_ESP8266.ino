@@ -22,7 +22,7 @@
 #define OTA_WINDOW_MS 480000UL  // 2x report period + 2x compile budget
 #define PORTAL_RESET_MS 900000UL
 #define MQTT_RESOLVE_RETRY_MS 30000UL
-#define MQTT_RESTART_MS 300000UL
+#define MQTT_RERESOLVE_MS 30000UL
 
 #include <LittleFS.h>
 #include <FS.h>
@@ -42,6 +42,8 @@
 #include "wind_calculations.h"
 #include "pressure_calculations.h"
 #include "temperature_calculations.h"
+#include "rain_calculations.h"
+#include "connectivity_reliability.h"
 
 #define LED_PIN       14    // GPIO14
 #define RAIN_PIN      12    // GPIO12
@@ -53,9 +55,12 @@
 /************************************************/
 void wind_task();
 void report_task();
+void rain_task();
 void setup_ota();
 void onOtaButton(HAButton *);
 void onStationElevationCommand(HANumeric, HANumber*);
+void onRainTipSizeCommand(HANumeric, HANumber*);
+void onWindSpeedUnitCommand(int8_t, HASelect*);
 void onMqttConnected();
 void onMqttDisconnected();
 void onMqttMessage(const char* topic, const uint8_t* payload, uint16_t length);
@@ -64,13 +69,20 @@ void processPendingOtaRequest();
 void expireOtaWindow();
 bool resolveMqttBroker();
 bool startMqtt();
+const char* wifiSleepModeName();
 void IRAM_ATTR anemometer_isr();
+void IRAM_ATTR rain_gauge_isr();
+void resetRainHistory();
 float get_wind_dir();
 
 /************************************************/
 /*   Task Scheduler Related Stuff               */
 /************************************************/
 #define WIND_SAMPLE_PERIOD_MS 1000UL
+#define RAIN_SAMPLE_PERIOD_MS 60000UL
+#define RAIN_HISTORY_MINUTES 1440U
+#define RAIN_DEBOUNCE_US 20000UL
+#define DEFAULT_RAIN_TIP_MICROMETERS 254L
 #define WIND_OBSERVATION_PERIOD_MS 120000UL
 #define WIND_GUST_PERIOD_MS 3000UL
 #define REPORT_PERIOD WIND_OBSERVATION_PERIOD_MS
@@ -85,6 +97,7 @@ float get_wind_dir();
 Scheduler ts;
 Task wind (WIND_SAMPLE_PERIOD_MS, TASK_FOREVER, &wind_task, &ts, true);
 Task report (REPORT_PERIOD, TASK_FOREVER, &report_task, &ts, true);
+Task rain (RAIN_SAMPLE_PERIOD_MS, TASK_FOREVER, &rain_task, &ts, true);
 
 /************************************************/
 /* ArduinoHA Stuff                              */
@@ -108,12 +121,21 @@ HASensorNumber seaLevelPressure("sea_level_pressure", HASensorNumber::PrecisionP
 HASensorNumber pressureChange3h("pressure_change_3h", HASensorNumber::PrecisionP1);
 HASensor pressureTrend("pressure_trend");
 HANumber stationElevationControl("station_elevation", HANumber::PrecisionP0);
+HANumber rainTipSizeControl("rain_tip_size", HANumber::PrecisionP3);
+HASelect windSpeedUnitControl("wind_speed_unit");
 HASensorNumber windSpeed("wind_speed", HASensorNumber::PrecisionP2);
 HASensorNumber windGust("wind_gust", HASensorNumber::PrecisionP2);
 HASensorNumber windDirection("wind_direction", HASensorNumber::PrecisionP1);
 HASensorNumber windPulseCount("wind_pulse_count", HASensorNumber::PrecisionP0);
 HASensorNumber windSampleCount("wind_sample_count", HASensorNumber::PrecisionP0);
 HASensorNumber windGustPulseCount("wind_gust_pulse_count", HASensorNumber::PrecisionP0);
+HASensorNumber rainOneMinute("rain_1m", HASensorNumber::PrecisionP2);
+HASensorNumber rainOneHour("rain_1h", HASensorNumber::PrecisionP2);
+HASensorNumber rainThreeHour("rain_3h", HASensorNumber::PrecisionP2);
+HASensorNumber rainSixHour("rain_6h", HASensorNumber::PrecisionP2);
+HASensorNumber rainTwentyFourHour("rain_24h", HASensorNumber::PrecisionP2);
+HASensorNumber rainSessionTotal("rain_session_total", HASensorNumber::PrecisionP2);
+HASensorNumber rainTipCountSensor("rain_tip_count_1m", HASensorNumber::PrecisionP0);
 HASensorNumber boxTemperature("box_temperature", HASensorNumber::PrecisionP1);
 HAButton otaButton("enable_ota");
 HASensor otaStatus("ota_status");
@@ -131,6 +153,7 @@ unsigned long otaDeadline = 0;
 unsigned long portalStartedAt = 0;
 unsigned long mqttDisconnectedAt = 0;
 unsigned long mqttResolveRetryAt = 0;
+unsigned long mqttConnectStartedAt = 0;
 bool mqttStarted = false;
 String otaState = "standby";
 bool sensorTasksPaused = false;
@@ -158,6 +181,10 @@ bool bAht20 = false;
 int httpPort = 0;
 long stationElevationMeters = 0;
 long pressureOffsetPa = 0;
+long rainTipMicrometers = DEFAULT_RAIN_TIP_MICROMETERS;
+bool windSpeedUnitKmh = false;
+bool windUnitRestartPending = false;
+unsigned long windUnitRestartAt = 0;
 FSInfo fs_info;
 
 
@@ -195,33 +222,115 @@ void onStationElevationCommand(HANumeric number, HANumber* sender) {
   Serial.printf("Station elevation updated from Home Assistant: %ld m\n",
                 static_cast<long>(stationElevationMeters));
 }
+void onRainTipSizeCommand(HANumeric number, HANumber* sender) {
+  if (!number.isSet()) {
+    Serial.println(F("Rejected empty rain-tip-size command"));
+    return;
+  }
+
+  const float requestedInches = number.toFloat();
+  if (!isfinite(requestedInches) ||
+      requestedInches < 0.001f || requestedInches > 0.400f) {
+    Serial.printf("Rejected rain tip size outside 0.001..0.400 inches: %0.3f\n",
+                  requestedInches);
+    return;
+  }
+
+  const long requestedMicrometers =
+      static_cast<long>(roundf(requestedInches * 25400.0f));
+  File tipFile = LittleFS.open("/weather_rain_tip_um", "w");
+  if (!tipFile) {
+    Serial.println(F("Unable to persist rain tip size"));
+    return;
+  }
+
+  const String storedValue(requestedMicrometers);
+  const size_t written = tipFile.print(storedValue);
+  tipFile.close();
+  if (written != storedValue.length()) {
+    Serial.println(F("Incomplete rain-tip-size write; command rejected"));
+    return;
+  }
+
+  rainTipMicrometers = requestedMicrometers;
+  resetRainHistory();
+  sender->setState(rainTipMicrometers / 25400.0f, true);
+  Serial.printf("Rain tip size updated from Home Assistant: %0.3f in/tip; history reset\n",
+                rainTipMicrometers / 25400.0f);
+}
+
+void onWindSpeedUnitCommand(int8_t index, HASelect* sender) {
+  if (index < 0 || index > 1) {
+    Serial.printf("Rejected unknown wind speed unit index: %d\n", index);
+    return;
+  }
+
+  File unitFile = LittleFS.open("/weather_wind_unit", "w");
+  if (!unitFile) {
+    Serial.println(F("Unable to persist wind speed unit"));
+    return;
+  }
+
+  const size_t written = unitFile.print(static_cast<int>(index));
+  unitFile.close();
+  if (written != 1U) {
+    Serial.println(F("Incomplete wind-speed-unit write; command rejected"));
+    return;
+  }
+
+  windSpeedUnitKmh = index == 1;
+  sender->setState(index);
+  Serial.printf("Wind speed unit updated to %s; restarting to refresh Home Assistant metadata\n",
+                windSpeedUnitKmh ? "km/h" : "mph");
+  windUnitRestartPending = true;
+  windUnitRestartAt = millis() + 1500UL;
+}
 bool resolveMqttBroker() {
   mqttBrokerAddress = IPAddress();
 
-  if (mqttBrokerAddress.fromString(mqttBrokerHost)) {
-    Serial.printf("MQTT broker configured as IP: %s\n",
-                  mqttBrokerAddress.toString().c_str());
-    return true;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(F("MQTT resolution deferred; Wi-Fi is not connected"));
+    return false;
   }
 
-  if (WiFi.hostByName(mqttBrokerHost.c_str(), mqttBrokerAddress, 5000) == 1) {
+  if (mqttBrokerAddress.fromString(mqttBrokerHost)) {
+    if (mqttBrokerAddress != IPAddress()) {
+      Serial.printf("MQTT broker configured as IP: %s\n",
+                    mqttBrokerAddress.toString().c_str());
+      return true;
+    }
+    Serial.println(F("Rejected configured MQTT address 0.0.0.0"));
+    return false;
+  }
+
+  Serial.printf("Resolving configured MQTT host by DNS: %s\n",
+                mqttBrokerHost.c_str());
+  if (WiFi.hostByName(mqttBrokerHost.c_str(), mqttBrokerAddress, 5000) == 1 &&
+      mqttBrokerAddress != IPAddress()) {
     Serial.printf("MQTT broker resolved by DNS: %s -> %s\n",
                   mqttBrokerHost.c_str(),
                   mqttBrokerAddress.toString().c_str());
     return true;
   }
 
+  mqttBrokerAddress = IPAddress();
+  Serial.println(F("Configured-host DNS failed; querying Home Assistant mDNS service"));
   const int serviceCount = MDNS.queryService("home-assistant", "tcp");
-  if (serviceCount > 0) {
-    mqttBrokerAddress = MDNS.IP(0);
-    if (mqttBrokerAddress != IPAddress()) {
+  for (int i = 0; i < serviceCount; ++i) {
+    const IPAddress candidate = MDNS.IP(i);
+    if (candidate != IPAddress()) {
+      mqttBrokerAddress = candidate;
       Serial.printf("Home Assistant found by mDNS: %s -> %s\n",
-                    MDNS.hostname(0).c_str(),
+                    MDNS.hostname(i).c_str(),
                     mqttBrokerAddress.toString().c_str());
       return true;
     }
+  }
 
-    Serial.println(F("mDNS returned an invalid 0.0.0.0 broker address"));
+  if (serviceCount > 0) {
+    Serial.println(F("mDNS returned only invalid 0.0.0.0 broker addresses"));
+  } else {
+    Serial.println(F("No Home Assistant MQTT service found by mDNS"));
   }
 
   Serial.printf("Unable to resolve MQTT broker: %s\n",
@@ -238,12 +347,30 @@ bool startMqtt() {
 
   Serial.printf("Starting MQTT with broker %s:%u\n",
                 mqttBrokerAddress.toString().c_str(), PORT);
-  mqtt.begin(mqttBrokerAddress, PORT, mqttBrokerUser.c_str(), mqttBrokerPass.c_str());
+  mqttConnectStartedAt = millis();
+  if (!mqtt.begin(
+          mqttBrokerAddress,
+          PORT,
+          mqttBrokerUser.c_str(),
+          mqttBrokerPass.c_str())) {
+    mqttResolveRetryAt = millis() + MQTT_RESOLVE_RETRY_MS;
+    Serial.println(F("MQTT client initialization failed; retrying in 30 seconds"));
+    return false;
+  }
   mqttStarted = true;
   mqttDisconnectedAt = millis();
   return true;
 }
 
+
+const char* wifiSleepModeName() {
+  switch (WiFi.getSleepMode()) {
+    case WIFI_NONE_SLEEP: return "none";
+    case WIFI_LIGHT_SLEEP: return "light";
+    case WIFI_MODEM_SLEEP: return "modem";
+    default: return "unknown";
+  }
+}
 void setup() {
   Serial.begin(115200); 
   Serial.println();
@@ -259,7 +386,9 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   pinMode(DIR_PIN, INPUT);
   pinMode(WIND_PIN, INPUT_PULLUP);
+  pinMode(RAIN_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(WIND_PIN), anemometer_isr, FALLING);
+  attachInterrupt(digitalPinToInterrupt(RAIN_PIN), rain_gauge_isr, FALLING);
   // attachInterrupt(digitalPinToInterrupt(WIND_PIN), anemometer_isr, FALLING);
 
   /************************************************
@@ -294,7 +423,7 @@ void setup() {
     Serial.println(F("Configuration portal will restart in 15 minutes"));
   };
   WiFiSettings.onPortalWaitLoop = []() {
-    if (millis() - portalStartedAt >= PORTAL_RESET_MS) {
+    if (portalTimeoutExpired(millis(), portalStartedAt, PORTAL_RESET_MS)) {
       Serial.println(F("Configuration portal timed out; restarting"));
       Serial.flush();
       ESP.restart();
@@ -309,6 +438,15 @@ void setup() {
   pressureOffsetPa = WiFiSettings.integer(
       "weather_pressure_offset_pa", -5000, 5000, 0,
       "BMP280 calibration offset (Pa)");
+  rainTipMicrometers = WiFiSettings.integer(
+      "weather_rain_tip_um", 10, 10000, DEFAULT_RAIN_TIP_MICROMETERS,
+      "Rain gauge bucket size (micrometers per tip)");
+  windSpeedUnitKmh = WiFiSettings.integer(
+      "weather_wind_unit", 0, 1, 0,
+      "Wind speed unit (0=mph, 1=km/h)") == 1;
+  const String manualWifiSsid = WiFiSettings.string(
+      "weather_hidden_ssid", 0, 32, "",
+      "Hidden WiFi SSID (optional; clear to use scanned selection)");
   otaPassword = WiFiSettings.string("weather_ota_password", 8, 64, WIFI_SETTINGS_PASSWORD, "OTA password");
   mqttBrokerHost = WiFiSettings.string("weather_mqtt_broker", 1, 64, "", "MQTT broker address");
   mqttBrokerUser = WiFiSettings.string("weather_mqtt_user", 1, 64, MQTT_BROKER_USER, "MQTT username");
@@ -316,19 +454,55 @@ void setup() {
 
   Serial.printf("Configuration portal SSID: %s\n", WiFiSettings.hostname.c_str());
 
+  if (manualWifiSsid.length() > 0) {
+    File ssidFile = LittleFS.open("/wifi-ssid", "w");
+    if (!ssidFile || ssidFile.print(manualWifiSsid) != manualWifiSsid.length()) {
+      Serial.println(F("Unable to persist manually entered hidden Wi-Fi SSID"));
+    } else {
+      Serial.println(F("Using manually entered hidden Wi-Fi SSID"));
+    }
+    ssidFile.close();
+  }
 
-  const bool configurationMissing =
-      otaPassword.length() == 0 ||
-      mqttBrokerHost.length() == 0 ||
-      mqttBrokerUser.length() == 0 ||
-      mqttBrokerPass.length() == 0;
+  String configuredWifiSsid;
+  File ssidFile = LittleFS.open("/wifi-ssid", "r");
+  if (ssidFile) {
+    configuredWifiSsid = ssidFile.readString();
+    ssidFile.close();
+  }
+
+  const bool configurationMissing = requiredConfigurationMissing(
+      configuredWifiSsid.length() > 0,
+      otaPassword.length() > 0,
+      mqttBrokerHost.length() > 0,
+      mqttBrokerUser.length() > 0,
+      mqttBrokerPass.length() > 0);
 
   if (configurationMissing) {
     Serial.println(F("Required configuration is missing; starting portal"));
+    if (configuredWifiSsid.length() == 0) {
+      Serial.println(F("Missing configuration: Wi-Fi SSID"));
+    }
+    if (otaPassword.length() == 0) {
+      Serial.println(F("Missing configuration: OTA password"));
+    }
+    if (mqttBrokerHost.length() == 0) {
+      Serial.println(F("Missing configuration: MQTT broker"));
+    }
+    if (mqttBrokerUser.length() == 0) {
+      Serial.println(F("Missing configuration: MQTT username"));
+    }
+    if (mqttBrokerPass.length() == 0) {
+      Serial.println(F("Missing configuration: MQTT password"));
+    }
     WiFiSettings.portal();
   }
 
+  const unsigned long wifiConnectStartedAt = millis();
   WiFiSettings.connect(true, 60);
+  Serial.printf("POWER_BASELINE Wi-Fi connect: %lu ms; sleep mode: %s\n",
+                millis() - wifiConnectStartedAt,
+                wifiSleepModeName());
 
   // ArduinoOTA initializes the ESP8266 mDNS responder used by the fallback.
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
@@ -416,12 +590,64 @@ void setup() {
   if (stationElevationMeters != UNCONFIGURED_ELEVATION_METERS) {
     stationElevationControl.setCurrentState(static_cast<int32_t>(stationElevationMeters));
   }
+  rainTipSizeControl.setIcon("mdi:cup-water");
+  rainTipSizeControl.setName("Rain Gauge Tip Size");
+  rainTipSizeControl.setUnitOfMeasurement("in/tip");
+  rainTipSizeControl.setMode(HANumber::ModeBox);
+  rainTipSizeControl.setMin(0.001f);
+  rainTipSizeControl.setMax(0.400f);
+  rainTipSizeControl.setStep(0.001f);
+  rainTipSizeControl.setRetain(false);
+  rainTipSizeControl.setOptimistic(false);
+  rainTipSizeControl.onCommand(onRainTipSizeCommand);
+  rainTipSizeControl.setCurrentState(rainTipMicrometers / 25400.0f);
+  windSpeedUnitControl.setIcon("mdi:speedometer");
+  windSpeedUnitControl.setName("Wind Speed Unit");
+  windSpeedUnitControl.setOptions("mph;km/h");
+  windSpeedUnitControl.setRetain(false);
+  windSpeedUnitControl.setOptimistic(false);
+  windSpeedUnitControl.onCommand(onWindSpeedUnitCommand);
+  windSpeedUnitControl.setCurrentState(windSpeedUnitKmh ? 1 : 0);
+
+  rainOneMinute.setIcon("mdi:weather-rainy");
+  rainOneMinute.setName("1-Minute Rain");
+  rainOneMinute.setUnitOfMeasurement("in");
+  rainOneMinute.setDeviceClass("precipitation");
+  rainOneMinute.setStateClass("measurement");
+  rainOneHour.setIcon("mdi:weather-rainy");
+  rainOneHour.setName("Latest 60-Minute Rain");
+  rainOneHour.setUnitOfMeasurement("in");
+  rainOneHour.setDeviceClass("precipitation");
+  rainOneHour.setStateClass("measurement");
+  rainThreeHour.setIcon("mdi:weather-rainy");
+  rainThreeHour.setName("Latest 3-Hour Rain");
+  rainThreeHour.setUnitOfMeasurement("in");
+  rainThreeHour.setDeviceClass("precipitation");
+  rainThreeHour.setStateClass("measurement");
+  rainSixHour.setIcon("mdi:weather-rainy");
+  rainSixHour.setName("Latest 6-Hour Rain");
+  rainSixHour.setUnitOfMeasurement("in");
+  rainSixHour.setDeviceClass("precipitation");
+  rainSixHour.setStateClass("measurement");
+  rainTwentyFourHour.setIcon("mdi:weather-rainy");
+  rainTwentyFourHour.setName("Latest 24-Hour Rain");
+  rainTwentyFourHour.setUnitOfMeasurement("in");
+  rainTwentyFourHour.setDeviceClass("precipitation");
+  rainTwentyFourHour.setStateClass("measurement");
+  rainSessionTotal.setIcon("mdi:weather-pouring");
+  rainSessionTotal.setName("Rain Since Boot or Calibration Change");
+  rainSessionTotal.setUnitOfMeasurement("in");
+  rainSessionTotal.setDeviceClass("precipitation");
+  rainSessionTotal.setStateClass("total_increasing");
+  rainTipCountSensor.setIcon("mdi:counter");
+  rainTipCountSensor.setName("1-Minute Rain Tip Count");
+  rainTipCountSensor.setUnitOfMeasurement("tips");
   windSpeed.setIcon("mdi:weather-windy");
   windSpeed.setName("2-Minute Sustained Wind Speed");
-  windSpeed.setUnitOfMeasurement("mph");
+  windSpeed.setUnitOfMeasurement(windSpeedUnitKmh ? "km/h" : "mph");
   windGust.setIcon("mdi:weather-windy");
   windGust.setName("3-Second Wind Gust");
-  windGust.setUnitOfMeasurement("mph");
+  windGust.setUnitOfMeasurement(windSpeedUnitKmh ? "km/h" : "mph");
   windDirection.setIcon("mdi:sun-compass");
   windDirection.setName("2-Minute True Wind Direction");
   windDirection.setUnitOfMeasurement("°");
@@ -478,6 +704,14 @@ void setup() {
 void loop() {
   if (mqttStarted) {
     mqtt.loop();
+    if (!mqtt.isConnected() && mqttDisconnectedAt != 0 &&
+        portalTimeoutExpired(millis(), mqttDisconnectedAt, MQTT_RERESOLVE_MS)) {
+      Serial.println(F("MQTT unavailable for 30 seconds; re-resolving broker"));
+      mqtt.disconnect();
+      mqttStarted = false;
+      mqttDisconnectedAt = 0;
+      mqttResolveRetryAt = millis();
+    }
   } else if (static_cast<int32_t>(millis() - mqttResolveRetryAt) >= 0) {
     startMqtt();
   }
@@ -488,10 +722,10 @@ void loop() {
     expireOtaWindow();
   }
 
-  if (mqttStarted && !mqtt.isConnected() && mqttDisconnectedAt != 0 &&
-      static_cast<int32_t>(millis() - mqttDisconnectedAt) >= static_cast<int32_t>(MQTT_RESTART_MS)) {
-    Serial.println(F("MQTT unavailable for 5 minutes; restarting to resolve broker again"));
+  if (windUnitRestartPending &&
+      static_cast<int32_t>(millis() - windUnitRestartAt) >= 0) {
     Serial.flush();
     ESP.restart();
   }
+
 }

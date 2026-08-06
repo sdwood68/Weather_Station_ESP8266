@@ -4,6 +4,28 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
 
 ## [Unreleased]
 
+- Added optional manual hidden-SSID entry to the WiFiSettings portal.
+- Added explicit missing-configuration diagnostics and rollover-safe portal
+  timeout regression coverage.
+- Replaced five-minute MQTT recovery reboots with 30-second DNS/mDNS
+  re-resolution and clean ArduinoHA reconnection.
+- Documented the 2026-08-05 toolchain and library review.
+
+- Changed the rain-gauge tip-size Home Assistant control to inches per tip.
+- Added a persistent mph/km/h wind-speed selector and applied it to sustained
+  wind and gust calculations and Home Assistant units.
+### Added
+
+- Started firmware 0.9.0 power-baseline work with Wi-Fi connection, MQTT
+  connection, and report-task timing diagnostics.
+- Added a repeatable electrical measurement procedure and acceptance criteria for
+  radio power-reduction experiments.
+- Added firmware 0.8.0 tipping-bucket rain reporting with one-minute ASOS
+  correction, 60-minute, 3-hour, 6-hour, and 24-hour accumulations, a session
+  total, raw tip diagnostics, and startup validity gating.
+- Added a persistent Home Assistant rain-tip-size control in millimeters per tip,
+  plus rain calculation vectors and calibration and wiring guidance.
+
 ## [0.7.1] - 2026-07-25
 
 ### Added

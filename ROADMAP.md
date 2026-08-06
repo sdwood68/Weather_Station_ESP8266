@@ -164,59 +164,44 @@ weather_station/<chip-id>/ota/status
 Home Assistant automations must target a specific device ID and expected
 firmware version. A broadcast OTA request should not be implemented.
 
-## Future deep-sleep support
+## Future sleep support (deferred)
 
-An ESP8266 cannot receive Wi-Fi or MQTT commands during deep sleep. MQTT cannot
-wake it; waking from deep sleep is effectively a reboot. The OTA workflow must
-therefore be checked during each normal sensor wake cycle.
+Radio sleep, retained OTA behavior across sleep, and external pulse-counting or
+wake requirements are tracked under **Deferred hardware-dependent firmware and
+validation**. Hardware architecture decisions are owned by
+[HARDWARE_ROADMAP.md](HARDWARE_ROADMAP.md).
 
-### Sleep-compatible OTA request
+## Hardware project boundary
 
-1. Home Assistant publishes an expiring, retained request to a dedicated topic,
-   such as `weather_station/<chip-id>/ota/request`.
-2. The station wakes on its normal sensor schedule, connects to Wi-Fi and MQTT,
-   publishes its readings, and briefly waits for commands.
-3. If no valid request arrives, it returns to deep sleep.
-4. If a valid request arrives, it immediately clears the retained request,
-   publishes `ready`, and remains awake for the OTA window.
-5. After upload, the station reboots and publishes the running firmware version.
-6. Once normal operation is confirmed, it resumes deep sleep.
+Electrical, mechanical, sensor-interface, board-selection, power-integrity, and
+physical calibration work is owned by the Weather Station Hardware Project and
+tracked in [HARDWARE_ROADMAP.md](HARDWARE_ROADMAP.md). Current interfaces and
+safety notes are in [HARDWARE_README.md](HARDWARE_README.md).
 
-Example request payload:
+Firmware tasks that depend on revised hardware are intentionally deferred here.
+They are not active release work until the hardware project provides a released
+revision, pin map, electrical limits, calibration data, and test results.
 
-```json
-{
-  "requested": true,
-  "expires": 1784563200,
-  "target_version": "0.2.0"
-}
-```
+### Deferred hardware-dependent firmware and validation
 
-The expiration timestamp prevents an old request from enabling OTA much later.
-Do not retain the ArduinoHA button command itself. Instead, have a Home Assistant
-automation translate the button press into the timestamped retained request.
+- [ ] After corrected AM2315 wiring and captured bus results are delivered, add
+      bounded initialization retries, checked transactions, CRC validation, bus
+      recovery, and Home Assistant failure diagnostics.
+- [ ] After wind calibration is delivered, validate pulse scaling, vane ADC
+      thresholds, true-north offset, sustained wind, and gust with physical data.
+- [ ] After rain calibration is delivered, validate debounce, exact tip counts,
+      controlled-volume and high-rate behavior, history thresholds, and rollover.
+- [ ] After the power design is delivered, publish voltage, current, power,
+      battery, and supervisor/brownout diagnostics.
+- [ ] After board profiles are released, isolate platform-specific APIs, add the
+      ESP32 implementation, preserve MQTT/configuration compatibility, and
+      compile and physically test both processor families.
+- [ ] After power traces and pulse-retention requirements are delivered,
+      implement and validate modem sleep, radio-off intervals, retained OTA
+      requests across sleep, and any external pulse-counting/wake interface.
 
-Expected deep-sleep handshake:
-
-```text
-Home Assistant retained request
-  -> scheduled device wake
-  -> request accepted and retained request cleared
-  -> ready
-  -> updating
-  -> reboot
-  -> running <target firmware version>
-  -> resume deep sleep
-```
-
-### Possible wake strategies
-
-- Check for OTA requests briefly after every sensor wake. Update latency will be
-  no longer than the normal sensor interval.
-- Add a scheduled maintenance window during which the device remains awake
-  longer for updates.
-- Use external GPIO wake hardware if immediate updates are ever required. MQTT
-  by itself cannot wake a sleeping ESP8266.
+Resume criteria: the applicable hardware handoff in HARDWARE_README.md is
+complete and identified by hardware revision.
 
 ## Implementation checkpoints
 
@@ -240,23 +225,26 @@ Home Assistant retained request
 
 ### Release 0.5.3 - Configuration and connectivity reliability (Priority 1)
 
-- [ ] Finish updating Arduino IDE, ESP8266 board support, and libraries.
-- [ ] Add manual SSID entry to the ESP-WiFiSettings configuration portal so a
-      freshly erased device can be configured for a hidden network. Prefer a
-      small extension to the current library over migrating the complete portal.
-      AutoConnect supports manual/hidden SSID entry, but its latest release was
-      1.4.2 on 2023-01-31 and its most recent repository commit was 2023-02-22,
-      so it is not considered actively maintained.
-- [ ] Verify missing-configuration portal entry and the 15-minute portal reset.
-- [ ] Make MQTT broker resolution resilient: retry configured DNS and mDNS
-      without starting MQTT with `0.0.0.0`, log each resolution path, and use a
-      DHCP reservation or router-provided local DNS name as the recommended
-      production configuration.
-- [ ] Diagnose the AM2315 initialization failure on the current hardware.
+- [x] Review the installed Arduino CLI, ESP8266 core, and direct dependencies;
+      record versions and recommendations in DEPENDENCY_REVIEW.md.
+- [ ] Test Arduino CLI 1.5.1 and Arduino IDE 2.3.9 alongside the working
+      installation before adopting the tool upgrade.
+- [x] Add optional manual hidden-SSID entry without forking ESP-WiFiSettings.
+- [x] Verify missing-configuration and rollover-safe 15-minute portal timeout
+      decisions with platform-independent regression tests.
+- [ ] Perform the destructive erased-filesystem portal and 15-minute restart test
+      on a spare or backed-up board.
+- [x] Retry configured DNS and Home Assistant mDNS without using 0.0.0.0; after
+      a 30-second MQTT outage, disconnect, re-resolve, and reconnect without a
+      controller reboot.
+- [ ] Physically fault DNS, mDNS, and the broker to verify recovery and continuous
+      sensor scheduling on target hardware.
+- [ ] Hardware dependency: AM2315 recovery remains deferred until unsafe I2C
+      pull-ups are corrected and captured-bus results are delivered.
 
-Exit criteria: both board profiles compile; a flash-erased NodeMCU can be
-configured using either a scanned or manually entered SSID; broker-resolution
-failure recovers without exposing an unnecessary AP; portal timeout is verified.
+Exit criteria: both board profiles compile; a flash-erased board accepts scanned
+or manual SSID configuration; resolver fault injection recovers without an
+unnecessary AP or reboot; and the physical portal timeout is verified.
 
 ### Release 0.6.0 - OTA production hardening (Priority 2)
 
@@ -282,30 +270,42 @@ recoverable, and the supported IDE/CLI procedure is documented.
       the standards-based observation periods.
 - [ ] Implement the selected calculations and publish enough diagnostic data to
       validate them against captured anemometer pulses.
-- [ ] Document calibration constants and a repeatable bench/field validation
-      procedure.
+- [x] Document calibration constants and the software test procedure; physical
+      wind calibration is deferred to the hardware-dependent section above.
+- [ ] Report barometric pressure in U.S. conventional units (inHg), with a
+      documented conversion from the sensor's native pressure value and validation
+      against known test values.
 
 Exit criteria: formulas and intervals are documented with primary references,
 test vectors pass, and Home Assistant reports clearly named standards-based wind
 measurements.
 
-### Release 0.8.0 - Radio power reduction and sleep readiness (Priority 4)
+### Release 0.8.0 - NWS-guided rain-gauge reporting (Priority 4)
 
-- [ ] Measure baseline current consumption during sensing, Wi-Fi connection, MQTT
-      publication, idle time, and OTA readiness.
-- [ ] Turn off or modem-sleep the Wi-Fi radio between reporting events while
-      preserving continuous anemometer pulse counting and reliable reconnects.
-- [ ] Measure connection latency and energy savings before selecting the final
-      radio duty cycle.
-- [ ] Validate the retained, expiring OTA-request workflow across a radio-off or
-      sleep/wake cycle.
-- [ ] Evaluate full deep sleep separately: the ESP8266 cannot count wind pulses
-      or receive MQTT while asleep, so it requires external pulse-counting/wake
-      hardware or an explicitly accepted loss of wind observations.
+- [x] Count and debounce tipping-bucket closures on the rain-gauge GPIO without
+      blocking wind pulse collection.
+- [x] Process discrete one-minute tip counts with the ASOS heated-tipping-bucket
+      correction and retain unrounded values for cumulative calculations.
+- [x] Add a persistent Home Assistant control for inches per tip, defaulting to
+      0.010 inch, and reset history when calibration changes.
+- [x] Publish one-minute raw tip count, corrected one-minute rain, latest 60-minute,
+      3-hour, 6-hour, and 24-hour rain, plus a clearly named session total.
+- [x] Add calculation vectors and document validity gating, calibration, wiring,
+      ASOS limitations, and the difference between rolling HA values and official
+      METAR, SHEF, or climate products in `RAIN_REPORTING.md`.
+- Physical rain validation is deferred to the hardware-dependent section above.
 
-Exit criteria: measured power savings and operational tradeoffs are documented;
-sensor reporting, MQTT availability, and OTA requests recover reliably after each
-radio-off interval.
+Software exit criteria: both ESP8266 profiles compile, calculation vectors pass,
+and Home Assistant reports correctly gated accumulations without claiming
+aviation-grade ASOS status. Physical acceptance is owned by the hardware project
+and is not an active firmware release blocker until updated hardware is delivered.
+
+### Release 0.9.0 - Radio power reduction and sleep readiness (deferred)
+
+All 0.9.0 implementation and validation is hardware-dependent. It is tracked
+under **Deferred hardware-dependent firmware and validation** and resumes only
+after the hardware project supplies power traces, measurement points, supported
+power states, and a decision about continuous pulse counting.
 
 ### Release process for every firmware version
 
