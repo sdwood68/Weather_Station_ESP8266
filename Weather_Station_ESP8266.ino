@@ -16,7 +16,7 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.7.2"
+#define FIRMWARE_VERSION "0.7.3"
 #define HARDWARE_MODEL "ESP8266 Weather Station"
 #define OTA_COMPILE_BUDGET_MS 120000UL
 #define OTA_WINDOW_MS 480000UL  // 2x report period + 2x compile budget
@@ -123,7 +123,7 @@ HASensorNumber seaLevelPressure("sea_level_pressure", HASensorNumber::PrecisionP
 HASensorNumber pressureChange3h("pressure_change_3h", HASensorNumber::PrecisionP1);
 HASensor pressureTrend("pressure_trend");
 HANumber stationElevationControl("station_elevation", HANumber::PrecisionP0);
-HANumber rainTipSizeControl("rain_tip_size", HANumber::PrecisionP3);
+HANumber rainTipSizeControl("rain_tip_size", HANumber::PrecisionP4);
 HASelect unitSystemControl("unit_system");
 HASensorNumber windSpeed("wind_speed", HASensorNumber::PrecisionP2);
 HASensorNumber windGust("wind_gust", HASensorNumber::PrecisionP2);
@@ -267,7 +267,7 @@ void onRainTipSizeCommand(HANumeric number, HANumber* sender) {
   const float reportedTipSize =
       rainTipMicrometersToEntry(rainTipMicrometers, unitSystem);
   sender->setState(reportedTipSize, true);
-  Serial.printf("Rain tip size updated: %0.3f %s; history reset\n",
+  Serial.printf("Rain tip size updated: %0.4f %s; history reset\n",
                 reportedTipSize,
                 usesInches(unitSystem) ? "in/tip" : "mm/tip");
 }
@@ -616,7 +616,7 @@ void setup() {
   rainTipSizeControl.setMode(HANumber::ModeBox);
   rainTipSizeControl.setMin(usesInches(unitSystem) ? 0.001f : 0.010f);
   rainTipSizeControl.setMax(usesInches(unitSystem) ? 0.400f : 10.000f);
-  rainTipSizeControl.setStep(0.001f);
+  rainTipSizeControl.setStep(0.0001f);
   rainTipSizeControl.setRetain(false);
   rainTipSizeControl.setOptimistic(false);
   rainTipSizeControl.onCommand(onRainTipSizeCommand);
@@ -664,6 +664,7 @@ void setup() {
   rainTipCountSensor.setIcon("mdi:counter");
   rainTipCountSensor.setName("1-Minute Rain Tip Count");
   rainTipCountSensor.setUnitOfMeasurement("tips");
+  rainTipCountSensor.setEntityCategory("diagnostic");
 
   windSpeed.setIcon("mdi:weather-windy");
   windSpeed.setName("2-Minute Sustained Wind Speed");
@@ -677,12 +678,15 @@ void setup() {
   windPulseCount.setIcon("mdi:counter");
   windPulseCount.setName("2-Minute Wind Pulse Count");
   windPulseCount.setUnitOfMeasurement("pulses");
+  windPulseCount.setEntityCategory("diagnostic");
   windSampleCount.setIcon("mdi:counter");
   windSampleCount.setName("Wind Sample Count");
   windSampleCount.setUnitOfMeasurement("samples");
+  windSampleCount.setEntityCategory("diagnostic");
   windGustPulseCount.setIcon("mdi:counter");
   windGustPulseCount.setName("3-Second Gust Pulse Count");
   windGustPulseCount.setUnitOfMeasurement("pulses");
+  windGustPulseCount.setEntityCategory("diagnostic");
   boxTemperature.setIcon("mdi:thermometer");
   boxTemperature.setName("Internal Temp");
   boxTemperature.setUnitOfMeasurement(temperatureUnit);
@@ -692,21 +696,27 @@ void setup() {
   otaButton.onCommand(onOtaButton);
   otaStatus.setName("OTA Status");
   otaStatus.setIcon("mdi:update");
+  otaStatus.setEntityCategory("diagnostic");
   firmwareVersion.setName("Firmware Version");
   firmwareVersion.setIcon("mdi:information-outline");
+  firmwareVersion.setEntityCategory("diagnostic");
   chipIdSensor.setName("Chip ID");
   chipIdSensor.setIcon("mdi:identifier");
+  chipIdSensor.setEntityCategory("diagnostic");
   macAddressSensor.setName("Wi-Fi MAC Address");
   macAddressSensor.setIcon("mdi:network-outline");
+  macAddressSensor.setEntityCategory("diagnostic");
   ipAddressSensor.setName("IP Address");
   ipAddressSensor.setIcon("mdi:ip-network-outline");
   hostnameSensor.setName("Hostname");
   hostnameSensor.setIcon("mdi:web");
   resetReasonSensor.setName("Reset Reason");
   resetReasonSensor.setIcon("mdi:restart-alert");
+  resetReasonSensor.setEntityCategory("diagnostic");
   wifiRssiSensor.setName("Wi-Fi RSSI");
   wifiRssiSensor.setIcon("mdi:wifi");
   wifiRssiSensor.setUnitOfMeasurement("dBm");
+  wifiRssiSensor.setEntityCategory("diagnostic");
 
   mqtt.setDataPrefix("weather_station");
   mqtt.setBufferSize(512);

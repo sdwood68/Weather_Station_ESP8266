@@ -10,9 +10,11 @@ heating, siting, calibration, redundancy, or aviation-reporting performance.
 
 - Rain tip size: persistent control displayed in inches per tip for USA or
   millimetres per tip for European Union and U.K. The USA range is 0.001 through
-  0.400 inch; the metric range is 0.010 through 10.000 mm. The default is the
+  0.4000 inch; the metric range is 0.0100 through 10.0000 mm. Values are entered
+  and reported to four decimal places. The default is the
   regional equivalent of 0.010 inch.
-- `rain_tip_count_1m`: debounced raw tips in the latest one-minute period.
+- Rain tip count: debounced raw tips in the latest one-minute period; this
+  count is placed in the Home Assistant Diagnostics section.
 - `rain_1m`: corrected latest one-minute liquid accumulation.
 - `rain_1h`: sum of the latest 60 valid corrected one-minute periods.
 - `rain_3h`: sum of the latest 180 valid corrected one-minute periods.

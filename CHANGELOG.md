@@ -4,6 +4,11 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-08-07
+
+- Increased the Rain Gauge Tip Size Home Assistant control to four decimal places.
+- Categorized raw rain and wind counts plus OTA, firmware, reset, chip, Wi-Fi MAC, and Wi-Fi RSSI entities as Home Assistant diagnostics.
+
 ## [0.7.2] - 2026-08-07
 
 - Increased ArduinoHA entity capacity from its 24-entity ESP8266 default to 40, restoring the Enable OTA button and all later-declared diagnostic entities.

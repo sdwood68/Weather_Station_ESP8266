@@ -1,0 +1,132 @@
+diff --git a/src/device-types/HABaseDeviceType.h b/src/device-types/HABaseDeviceType.h
+index 0d6fa32..25d9b1e 100644
+--- a/src/device-types/HABaseDeviceType.h
++++ b/src/device-types/HABaseDeviceType.h
+@@ -21,7 +21,10 @@ public:
+         PrecisionP2,
+ 
+         /// Three digits after the decimal point.
+-        PrecisionP3
++        PrecisionP3,
++
++        /// Four digits after the decimal point.
++        PrecisionP4
+     };
+ 
+     /**
+@@ -94,6 +97,12 @@ public:
+     inline const char* getObjectId() const
+         { return _objectId; }
+ 
++    inline void setEntityCategory(const char* category)
++        { _entityCategory = category; }
++
++    inline const char* getEntityCategory() const
++        { return _entityCategory; }
++
+     /**
+      * Sets availability of the device type.
+      * Setting the initial availability enables availability reporting for this device type.
+@@ -228,6 +237,9 @@ protected:
+     /// The object ID that was set using setObjectId method. It can be nullptr.
+     const char* _objectId;
+ 
++
++    /// Optional Home Assistant entity category (for example, diagnostic).
++    const char* _entityCategory;
+     /// HASerializer that belongs to this device type. It can be nullptr.
+     HASerializer* _serializer;
+ 
+
+diff --git a/src/device-types/HABaseDeviceType.cpp b/src/device-types/HABaseDeviceType.cpp
+index 17583e3..b6fb259 100644
+--- a/src/device-types/HABaseDeviceType.cpp
++++ b/src/device-types/HABaseDeviceType.cpp
+@@ -12,6 +12,7 @@ HABaseDeviceType::HABaseDeviceType(
+     _uniqueId(uniqueId),
+     _name(nullptr),
+     _objectId(nullptr),
++    _entityCategory(nullptr),
+     _serializer(nullptr),
+     _availability(AvailabilityDefault)
+ {
+
+diff --git a/src/device-types/HANumber.cpp b/src/device-types/HANumber.cpp
+index 2c41345..197db63 100644
+--- a/src/device-types/HANumber.cpp
++++ b/src/device-types/HANumber.cpp
+@@ -206,6 +206,9 @@ const __FlashStringHelper* HANumber::getCommandTemplate()
+     case PrecisionP3:
+         return AHATOFSTR(HAValueTemplateFloatP3);
+ 
++    case PrecisionP4:
++        return AHATOFSTR(HAValueTemplateFloatP4);
++
+     default:
+         return nullptr;
+     }
+
+diff --git a/src/utils/HADictionary.h b/src/utils/HADictionary.h
+index 609f38d..2932ce8 100644
+--- a/src/utils/HADictionary.h
++++ b/src/utils/HADictionary.h
+@@ -44,6 +44,7 @@ extern const char HADeviceProperty[];
+ extern const char HADeviceClassProperty[];
+ extern const char HAStateClassProperty[];
+ extern const char HAIconProperty[];
++extern const char HAEntityCategoryProperty[];
+ extern const char HARetainProperty[];
+ extern const char HASourceTypeProperty[];
+ extern const char HAEncodingProperty[];
+@@ -196,6 +197,7 @@ extern const char HAHexMap[];
+ extern const char HAValueTemplateFloatP1[];
+ extern const char HAValueTemplateFloatP2[];
+ extern const char HAValueTemplateFloatP3[];
++extern const char HAValueTemplateFloatP4[];
+ extern const char HATemperatureUnitC[];
+ extern const char HATemperatureUnitF[];
+ 
+
+diff --git a/src/utils/HADictionary.cpp b/src/utils/HADictionary.cpp
+index 266d21d..7131ccf 100644
+--- a/src/utils/HADictionary.cpp
++++ b/src/utils/HADictionary.cpp
+@@ -44,6 +44,7 @@ const char HADeviceProperty[] PROGMEM = {"dev"};
+ const char HADeviceClassProperty[] PROGMEM = {"dev_cla"};
+ const char HAStateClassProperty[] PROGMEM = {"stat_cla"};
+ const char HAIconProperty[] PROGMEM = {"ic"};
++const char HAEntityCategoryProperty[] PROGMEM = {"ent_cat"};
+ const char HARetainProperty[] PROGMEM = {"ret"};
+ const char HASourceTypeProperty[] PROGMEM = {"src_type"};
+ const char HAEncodingProperty[] PROGMEM = {"e"};
+@@ -196,5 +197,6 @@ const char HAHexMap[] PROGMEM = {"0123456789abcdef"};
+ const char HAValueTemplateFloatP1[] PROGMEM = {"{{int(float(value)*10**1)}}"};
+ const char HAValueTemplateFloatP2[] PROGMEM = {"{{int(float(value)*10**2)}}"};
+ const char HAValueTemplateFloatP3[] PROGMEM = {"{{int(float(value)*10**3)}}"};
++const char HAValueTemplateFloatP4[] PROGMEM = {"{{int(float(value)*10**4)}}"};
+ const char HATemperatureUnitC[] PROGMEM = {"C"};
+ const char HATemperatureUnitF[] PROGMEM = {"F"};
+
+diff --git a/src/utils/HASerializer.cpp b/src/utils/HASerializer.cpp
+index 832426d..096fbe8 100644
+--- a/src/utils/HASerializer.cpp
++++ b/src/utils/HASerializer.cpp
+@@ -159,10 +159,15 @@ HASerializer::HASerializer(
+ ) :
+     _deviceType(deviceType),
+     _entriesNb(0),
+-    _maxEntriesNb(maxEntriesNb),
+-    _entries(new SerializerEntry[maxEntriesNb])
++    _maxEntriesNb(maxEntriesNb +
++        (deviceType && deviceType->getEntityCategory() ? 1 : 0)),
++    _entries(new SerializerEntry[maxEntriesNb +
++        (deviceType && deviceType->getEntityCategory() ? 1 : 0)])
+ {
+-
++    if (deviceType && deviceType->getEntityCategory()) {
++        set(AHATOFSTR(HAEntityCategoryProperty),
++            deviceType->getEntityCategory());
++    }
+ }
+ 
+ HASerializer::~HASerializer()
