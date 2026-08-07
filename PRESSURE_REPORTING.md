@@ -40,7 +40,8 @@ The WiFiSettings portal provides:
 - `weather_station_elevation_m`: designated station/sensor elevation above mean
   sea level in whole meters. This setting has no default; altimeter and sea-level
   pressure remain unpublished until it is configured. The same value is exposed as a
-  non-retained Home Assistant Station Elevation number control. Accepted
+  non-retained Home Assistant Station Elevation number control, displayed in
+  feet for USA or metres for European Union and U.K. Accepted
   commands are persisted to LittleFS and applied immediately; Altimeter Setting
   remains a calculated sensor rather than a manual override.
 - `weather_pressure_offset_pa`: signed calibration correction in pascals.

@@ -4,6 +4,13 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-08-07
+
+- Increased ArduinoHA entity capacity from its 24-entity ESP8266 default to 40, restoring the Enable OTA button and all later-declared diagnostic entities.
+
+- Replaced separate measurement-unit choices with one persistent Home Assistant regional selector for USA, European Union, and United Kingdom conventions.
+- Applied the selected region to temperature, wind, rain, pressure, and elevation reports, including converted rain-tip and station-elevation entry fields.
+
 - Added optional manual hidden-SSID entry to the WiFiSettings portal.
 - Added explicit missing-configuration diagnostics and rollover-safe portal
   timeout regression coverage.

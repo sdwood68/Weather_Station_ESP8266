@@ -17,7 +17,8 @@ calculation with explicitly named observation periods.
   produce an intermediate direction.
 - **Calm:** Sustained speed below 2 knots (2.3 mph) is calm. Calm direction is
   reported as 0 degrees. This follows the ASOS response/reporting threshold,
-  while allowing the Home Assistant wind unit to be mph or km/h.
+  while the regional Home Assistant unit selector reports mph for USA and U.K.
+  or km/h for European Union.
 - **Gust:** The largest rolling three-second mean in the two-minute observation
   is published as `3-Second Wind Gust`. This is a measured maximum, not an ASOS
   determination that a formal gust remark is warranted; no peak/lull threshold
@@ -48,7 +49,10 @@ conformance.
 
 ## Calibration constants
 
-The Home Assistant `wind_speed_unit` selector chooses `mph` or `km/h`. The selection is persisted, scales both sustained speed and gust (`mph × 1.609344` for km/h), and restarts the station so Home Assistant discovery metadata and reported values always use the same unit.
+The Home Assistant unit-system selector controls all measurement units. Wind is
+reported in mph for USA and U.K. or km/h for European Union. The selection is
+persisted, scales both sustained speed and gust, and restarts the station so
+Home Assistant discovery metadata and reported values always agree.
 
 `ANEMOMETER_MPH_PER_HZ` is `1.492 mph` per pulse per second, the current
 manufacturer conversion for the installed cup anemometer. Validate this value

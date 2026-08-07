@@ -65,9 +65,10 @@ void publishRainWindow(
       rain_history_count,
       minutes);
   if (!isnan(total)) {
-    const float rounded = roundRainToHundredthInch(total);
+    const float rounded = reportedRain(total, unitSystem);
     sensor.setValue(rounded);
-    Serial.printf("%s: %0.2f in\n", label, rounded);
+    Serial.printf("%s: %0.2f %s\n", label, rounded,
+                  usesInches(unitSystem) ? "in" : "mm");
   } else {
     Serial.printf("%s pending: %u/%u valid one-minute periods\n",
                   label,
@@ -97,11 +98,11 @@ void rain_task() {
   }
   rain_session_total_inches += correctedInches;
 
-  const float minuteOutput = roundRainToHundredthInch(correctedInches);
+  const float minuteOutput = reportedRain(correctedInches, unitSystem);
   rainTipCountSensor.setValue(capturedTips);
   rainOneMinute.setValue(minuteOutput);
   rainSessionTotal.setValue(
-      roundRainToHundredthInch(rain_session_total_inches));
+      reportedRain(rain_session_total_inches, unitSystem));
   Serial.printf(
       "ASOS rain minute: %lu tips at %0.3f in/tip, %0.4f in corrected, %0.2f in reported\n",
       static_cast<unsigned long>(capturedTips),
@@ -240,13 +241,13 @@ void report_task() {
       Serial.printf("AM2315 Humidity: %0.1f %%\n", am2315Humidity);
       fHumidity += am2315Humidity;
       humidityReadings++;
-      temperature.setValue(outdoorTemperatureF);
+      temperature.setValue(reportedTemperature(outdoorTemperatureC, unitSystem));
 
       const float dewPointC =
           calculateDewPointC(outdoorTemperatureC, am2315Humidity);
       if (!isnan(dewPointC)) {
         const float dewPointF = 1.8f * dewPointC + 32.0f;
-        dewPoint.setValue(dewPointF);
+        dewPoint.setValue(reportedTemperature(dewPointC, unitSystem));
         Serial.printf("Dew point: %0.1f F\n", dewPointF);
       } else {
         Serial.println(F("Dew-point result rejected by sanity checks"));
@@ -255,7 +256,9 @@ void report_task() {
       const float calculatedHeatIndexF =
           calculateNwsHeatIndexF(outdoorTemperatureF, am2315Humidity);
       if (!isnan(calculatedHeatIndexF)) {
-        heatIndex.setValue(calculatedHeatIndexF);
+        heatIndex.setValue(usesFahrenheit(unitSystem)
+                               ? calculatedHeatIndexF
+                               : fahrenheitToCelsius(calculatedHeatIndexF));
         Serial.printf("NWS heat index: %0.1f F\n", calculatedHeatIndexF);
       } else {
         Serial.println(F("Heat-index result rejected by sanity checks"));
@@ -264,13 +267,13 @@ void report_task() {
   }
 
   if (!isnan(stationPressureHpa)) {
-    airPressure.setValue(stationPressureHpa / 10.0f); // Existing kPa topic.
+    airPressure.setValue(reportedPressure(stationPressureHpa, unitSystem));
 
     if (pressure_tendency_count == PRESSURE_TENDENCY_SAMPLES) {
       float changeHpa =
           stationPressureHpa - station_pressure_history[pressure_tendency_index];
       changeHpa = roundf(changeHpa * 10.0f) / 10.0f;
-      pressureChange3h.setValue(changeHpa);
+      pressureChange3h.setValue(reportedPressure(changeHpa, unitSystem));
       const char* trend =
           changeHpa > 0.0f ? "rising" : (changeHpa < 0.0f ? "falling" : "steady");
       pressureTrend.setValue(trend);
@@ -291,7 +294,7 @@ void report_task() {
       const float altimeterHpa = calculateAltimeterSettingHpa(
           stationPressureHpa, stationElevationMeters);
       if (!isnan(altimeterHpa)) {
-        altimeterSetting.setValue(altimeterHpa);
+        altimeterSetting.setValue(reportedPressure(altimeterHpa, unitSystem));
         Serial.printf("Altimeter setting: %0.2f hPa\n", altimeterHpa);
       }
     } else {
@@ -309,7 +312,7 @@ void report_task() {
             outdoorTemperatureC,
             temperatureTwelveHoursAgoC);
         if (!isnan(seaLevelHpa)) {
-          seaLevelPressure.setValue(seaLevelHpa);
+          seaLevelPressure.setValue(reportedPressure(seaLevelHpa, unitSystem));
           Serial.printf(
               "Sea-level pressure: %0.2f hPa (current %0.1f C, 12-hour %0.1f C)\n",
               seaLevelHpa,
@@ -331,7 +334,10 @@ void report_task() {
     }
   }
   if (internalTempReadings > 0) {
-    boxTemperature.setValue(fIntTemp / internalTempReadings);
+    const float averageInternalF = fIntTemp / internalTempReadings;
+    boxTemperature.setValue(usesFahrenheit(unitSystem)
+                                ? averageInternalF
+                                : fahrenheitToCelsius(averageInternalF));
   }
   if (humidityReadings > 0) {
     humidity.setValue(fHumidity / humidityReadings);
@@ -355,10 +361,11 @@ void report_task() {
       ANEMOMETER_MPH_PER_HZ,
       CALM_THRESHOLD_MPH);
 
-  const float windUnitScale = windSpeedUnitKmh ? 1.609344f : 1.0f;
-  const float reportedSustainedSpeed = observation.sustainedMph * windUnitScale;
-  const float reportedGustSpeed = observation.gustMph * windUnitScale;
-  const char* windUnit = windSpeedUnitKmh ? "km/h" : "mph";
+  const float reportedSustainedSpeed =
+      reportedWindSpeed(observation.sustainedMph, unitSystem);
+  const float reportedGustSpeed =
+      reportedWindSpeed(observation.gustMph, unitSystem);
+  const char* windUnit = usesKilometersPerHour(unitSystem) ? "km/h" : "mph";
   Serial.printf("2-minute sustained wind: %0.2f %s\n",
                 reportedSustainedSpeed, windUnit);
   Serial.printf("3-second wind gust: %0.2f %s\n",

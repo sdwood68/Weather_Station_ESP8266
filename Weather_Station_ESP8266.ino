@@ -16,7 +16,7 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.7.1"
+#define FIRMWARE_VERSION "0.7.2"
 #define HARDWARE_MODEL "ESP8266 Weather Station"
 #define OTA_COMPILE_BUDGET_MS 120000UL
 #define OTA_WINDOW_MS 480000UL  // 2x report period + 2x compile budget
@@ -44,6 +44,7 @@
 #include "temperature_calculations.h"
 #include "rain_calculations.h"
 #include "connectivity_reliability.h"
+#include "unit_system.h"
 
 #define LED_PIN       14    // GPIO14
 #define RAIN_PIN      12    // GPIO12
@@ -60,7 +61,7 @@ void setup_ota();
 void onOtaButton(HAButton *);
 void onStationElevationCommand(HANumeric, HANumber*);
 void onRainTipSizeCommand(HANumeric, HANumber*);
-void onWindSpeedUnitCommand(int8_t, HASelect*);
+void onUnitSystemCommand(int8_t, HASelect*);
 void onMqttConnected();
 void onMqttDisconnected();
 void onMqttMessage(const char* topic, const uint8_t* payload, uint16_t length);
@@ -107,7 +108,8 @@ Task rain (RAIN_SAMPLE_PERIOD_MS, TASK_FOREVER, &rain_task, &ts, true);
 #define TARGET_HOSTNAME "WoodHA"
 WiFiClient client;
 HADevice device;
-HAMqtt mqtt(client, device);
+static const uint8_t HA_ENTITY_CAPACITY = 40;
+HAMqtt mqtt(client, device, HA_ENTITY_CAPACITY);
 IPAddress server_ip;
 uint16_t port_number;
 
@@ -122,7 +124,7 @@ HASensorNumber pressureChange3h("pressure_change_3h", HASensorNumber::PrecisionP
 HASensor pressureTrend("pressure_trend");
 HANumber stationElevationControl("station_elevation", HANumber::PrecisionP0);
 HANumber rainTipSizeControl("rain_tip_size", HANumber::PrecisionP3);
-HASelect windSpeedUnitControl("wind_speed_unit");
+HASelect unitSystemControl("unit_system");
 HASensorNumber windSpeed("wind_speed", HASensorNumber::PrecisionP2);
 HASensorNumber windGust("wind_gust", HASensorNumber::PrecisionP2);
 HASensorNumber windDirection("wind_direction", HASensorNumber::PrecisionP1);
@@ -182,9 +184,9 @@ int httpPort = 0;
 long stationElevationMeters = 0;
 long pressureOffsetPa = 0;
 long rainTipMicrometers = DEFAULT_RAIN_TIP_MICROMETERS;
-bool windSpeedUnitKmh = false;
-bool windUnitRestartPending = false;
-unsigned long windUnitRestartAt = 0;
+UnitSystem unitSystem = UnitSystem::USA;
+bool unitSystemRestartPending = false;
+unsigned long unitSystemRestartAt = 0;
 FSInfo fs_info;
 
 
@@ -194,56 +196,65 @@ void onStationElevationCommand(HANumeric number, HANumber* sender) {
     Serial.println(F("Rejected empty station-elevation command"));
     return;
   }
-
-  const int32_t requestedElevation =
-      static_cast<int32_t>(roundf(number.toFloat()));
-  if (requestedElevation < -500 || requestedElevation > 9000) {
-    Serial.printf("Rejected station elevation outside -500..9000 m: %ld\n",
-                  static_cast<long>(requestedElevation));
+  const float requestedEntry = number.toFloat();
+  const float minimumEntry = usesFeet(unitSystem) ? -1640.0f : -500.0f;
+  const float maximumEntry = usesFeet(unitSystem) ? 29528.0f : 9000.0f;
+  if (!isfinite(requestedEntry) ||
+      requestedEntry < minimumEntry || requestedEntry > maximumEntry) {
+    Serial.printf("Rejected station elevation outside %0.0f..%0.0f %s: %0.1f\n",
+                  minimumEntry, maximumEntry,
+                  usesFeet(unitSystem) ? "ft" : "m", requestedEntry);
     return;
   }
-
+  const int32_t requestedMeters = static_cast<int32_t>(
+      roundf(elevationEntryToMeters(requestedEntry, unitSystem)));
   File elevationFile = LittleFS.open("/weather_station_elevation_m", "w");
   if (!elevationFile) {
     Serial.println(F("Unable to persist station elevation"));
     return;
   }
-
-  const String elevationValue(requestedElevation);
+  const String elevationValue(requestedMeters);
   const size_t written = elevationFile.print(elevationValue);
   elevationFile.close();
   if (written != elevationValue.length()) {
     Serial.println(F("Incomplete station-elevation write; command rejected"));
     return;
   }
-
-  stationElevationMeters = requestedElevation;
-  sender->setState(requestedElevation, true);
-  Serial.printf("Station elevation updated from Home Assistant: %ld m\n",
-                static_cast<long>(stationElevationMeters));
+  stationElevationMeters = requestedMeters;
+  sender->setState(reportedElevation(stationElevationMeters, unitSystem), true);
+  Serial.printf("Station elevation updated: %ld m (%0.1f %s)\n",
+                static_cast<long>(stationElevationMeters),
+                reportedElevation(stationElevationMeters, unitSystem),
+                usesFeet(unitSystem) ? "ft" : "m");
 }
+
 void onRainTipSizeCommand(HANumeric number, HANumber* sender) {
   if (!number.isSet()) {
     Serial.println(F("Rejected empty rain-tip-size command"));
     return;
   }
-
-  const float requestedInches = number.toFloat();
-  if (!isfinite(requestedInches) ||
-      requestedInches < 0.001f || requestedInches > 0.400f) {
-    Serial.printf("Rejected rain tip size outside 0.001..0.400 inches: %0.3f\n",
-                  requestedInches);
+  const float requestedEntry = number.toFloat();
+  const float minimumEntry = usesInches(unitSystem) ? 0.001f : 0.010f;
+  const float maximumEntry = usesInches(unitSystem) ? 0.400f : 10.000f;
+  if (!isfinite(requestedEntry) ||
+      requestedEntry < minimumEntry || requestedEntry > maximumEntry) {
+    Serial.printf("Rejected rain tip size outside %0.3f..%0.3f %s: %0.3f\n",
+                  minimumEntry, maximumEntry,
+                  usesInches(unitSystem) ? "in/tip" : "mm/tip",
+                  requestedEntry);
     return;
   }
-
-  const long requestedMicrometers =
-      static_cast<long>(roundf(requestedInches * 25400.0f));
+  const long requestedMicrometers = static_cast<long>(
+      roundf(rainTipEntryToMicrometers(requestedEntry, unitSystem)));
+  if (requestedMicrometers < 10L || requestedMicrometers > 10000L) {
+    Serial.println(F("Rejected rain tip size after canonical conversion"));
+    return;
+  }
   File tipFile = LittleFS.open("/weather_rain_tip_um", "w");
   if (!tipFile) {
     Serial.println(F("Unable to persist rain tip size"));
     return;
   }
-
   const String storedValue(requestedMicrometers);
   const size_t written = tipFile.print(storedValue);
   tipFile.close();
@@ -251,40 +262,39 @@ void onRainTipSizeCommand(HANumeric number, HANumber* sender) {
     Serial.println(F("Incomplete rain-tip-size write; command rejected"));
     return;
   }
-
   rainTipMicrometers = requestedMicrometers;
   resetRainHistory();
-  sender->setState(rainTipMicrometers / 25400.0f, true);
-  Serial.printf("Rain tip size updated from Home Assistant: %0.3f in/tip; history reset\n",
-                rainTipMicrometers / 25400.0f);
+  const float reportedTipSize =
+      rainTipMicrometersToEntry(rainTipMicrometers, unitSystem);
+  sender->setState(reportedTipSize, true);
+  Serial.printf("Rain tip size updated: %0.3f %s; history reset\n",
+                reportedTipSize,
+                usesInches(unitSystem) ? "in/tip" : "mm/tip");
 }
 
-void onWindSpeedUnitCommand(int8_t index, HASelect* sender) {
-  if (index < 0 || index > 1) {
-    Serial.printf("Rejected unknown wind speed unit index: %d\n", index);
+void onUnitSystemCommand(int8_t index, HASelect* sender) {
+  if (!unitSystemIsValid(index)) {
+    Serial.printf("Rejected unknown unit-system index: %d\n", index);
     return;
   }
-
-  File unitFile = LittleFS.open("/weather_wind_unit", "w");
+  File unitFile = LittleFS.open("/weather_unit_system", "w");
   if (!unitFile) {
-    Serial.println(F("Unable to persist wind speed unit"));
+    Serial.println(F("Unable to persist unit system"));
     return;
   }
-
   const size_t written = unitFile.print(static_cast<int>(index));
   unitFile.close();
   if (written != 1U) {
-    Serial.println(F("Incomplete wind-speed-unit write; command rejected"));
+    Serial.println(F("Incomplete unit-system write; command rejected"));
     return;
   }
-
-  windSpeedUnitKmh = index == 1;
+  unitSystem = static_cast<UnitSystem>(index);
   sender->setState(index);
-  Serial.printf("Wind speed unit updated to %s; restarting to refresh Home Assistant metadata\n",
-                windSpeedUnitKmh ? "km/h" : "mph");
-  windUnitRestartPending = true;
-  windUnitRestartAt = millis() + 1500UL;
+  Serial.println(F("Unit system updated; restarting to refresh Home Assistant metadata"));
+  unitSystemRestartPending = true;
+  unitSystemRestartAt = millis() + 1500UL;
 }
+
 bool resolveMqttBroker() {
   mqttBrokerAddress = IPAddress();
 
@@ -441,9 +451,9 @@ void setup() {
   rainTipMicrometers = WiFiSettings.integer(
       "weather_rain_tip_um", 10, 10000, DEFAULT_RAIN_TIP_MICROMETERS,
       "Rain gauge bucket size (micrometers per tip)");
-  windSpeedUnitKmh = WiFiSettings.integer(
-      "weather_wind_unit", 0, 1, 0,
-      "Wind speed unit (0=mph, 1=km/h)") == 1;
+  unitSystem = static_cast<UnitSystem>(WiFiSettings.integer(
+      "weather_unit_system", 0, 2, 0,
+      "Unit system (0=USA, 1=European Union, 2=United Kingdom)"));
   const String manualWifiSsid = WiFiSettings.string(
       "weather_hidden_ssid", 0, 32, "",
       "Hidden WiFi SSID (optional; clear to use scanned selection)");
@@ -551,103 +561,116 @@ void setup() {
   device.setModel(HARDWARE_MODEL);
   device.setSoftwareVersion(FIRMWARE_VERSION);
 
+  const char* temperatureUnit = usesFahrenheit(unitSystem) ? "°F" : "°C";
+  const char* pressureUnit = usesInchesHg(unitSystem) ? "inHg" : "hPa";
+  const char* elevationUnit = usesFeet(unitSystem) ? "ft" : "m";
+  const char* rainUnit = usesInches(unitSystem) ? "in" : "mm";
+  const char* rainTipUnit = usesInches(unitSystem) ? "in/tip" : "mm/tip";
+  const char* windUnit = usesKilometersPerHour(unitSystem) ? "km/h" : "mph";
+
   temperature.setIcon("mdi:sun-thermometer");
   temperature.setName("Outside temp");
-  temperature.setUnitOfMeasurement("°F");
+  temperature.setUnitOfMeasurement(temperatureUnit);
   humidity.setIcon("mdi:water-percent");
   humidity.setName("Outside Humidity");
   humidity.setUnitOfMeasurement("%");
   dewPoint.setIcon("mdi:water-thermometer");
   dewPoint.setName("Dew Point");
-  dewPoint.setUnitOfMeasurement("°F");
+  dewPoint.setUnitOfMeasurement(temperatureUnit);
   heatIndex.setIcon("mdi:sun-thermometer");
   heatIndex.setName("Heat Index");
-  heatIndex.setUnitOfMeasurement("°F");
+  heatIndex.setUnitOfMeasurement(temperatureUnit);
   airPressure.setIcon("mdi:gauge");
   airPressure.setName("Station Pressure");
-  airPressure.setUnitOfMeasurement("kPa");
+  airPressure.setUnitOfMeasurement(pressureUnit);
   altimeterSetting.setIcon("mdi:gauge");
   altimeterSetting.setName("Altimeter Setting");
-  altimeterSetting.setUnitOfMeasurement("hPa");
+  altimeterSetting.setUnitOfMeasurement(pressureUnit);
   seaLevelPressure.setIcon("mdi:gauge");
   seaLevelPressure.setName("Sea-Level Pressure");
-  seaLevelPressure.setUnitOfMeasurement("hPa");
+  seaLevelPressure.setUnitOfMeasurement(pressureUnit);
   pressureChange3h.setIcon("mdi:chart-timeline-variant");
   pressureChange3h.setName("3-Hour Pressure Change");
-  pressureChange3h.setUnitOfMeasurement("hPa");
+  pressureChange3h.setUnitOfMeasurement(pressureUnit);
   pressureTrend.setIcon("mdi:trending-up");
   pressureTrend.setName("3-Hour Pressure Trend");
+
   stationElevationControl.setIcon("mdi:elevation-rise");
   stationElevationControl.setName("Station Elevation");
-  stationElevationControl.setUnitOfMeasurement("m");
+  stationElevationControl.setUnitOfMeasurement(elevationUnit);
   stationElevationControl.setMode(HANumber::ModeBox);
-  stationElevationControl.setMin(-500.0f);
-  stationElevationControl.setMax(9000.0f);
+  stationElevationControl.setMin(usesFeet(unitSystem) ? -1640.0f : -500.0f);
+  stationElevationControl.setMax(usesFeet(unitSystem) ? 29528.0f : 9000.0f);
   stationElevationControl.setStep(1.0f);
   stationElevationControl.setRetain(false);
   stationElevationControl.setOptimistic(false);
   stationElevationControl.onCommand(onStationElevationCommand);
   if (stationElevationMeters != UNCONFIGURED_ELEVATION_METERS) {
-    stationElevationControl.setCurrentState(static_cast<int32_t>(stationElevationMeters));
+    stationElevationControl.setCurrentState(
+        reportedElevation(stationElevationMeters, unitSystem));
   }
+
   rainTipSizeControl.setIcon("mdi:cup-water");
   rainTipSizeControl.setName("Rain Gauge Tip Size");
-  rainTipSizeControl.setUnitOfMeasurement("in/tip");
+  rainTipSizeControl.setUnitOfMeasurement(rainTipUnit);
   rainTipSizeControl.setMode(HANumber::ModeBox);
-  rainTipSizeControl.setMin(0.001f);
-  rainTipSizeControl.setMax(0.400f);
+  rainTipSizeControl.setMin(usesInches(unitSystem) ? 0.001f : 0.010f);
+  rainTipSizeControl.setMax(usesInches(unitSystem) ? 0.400f : 10.000f);
   rainTipSizeControl.setStep(0.001f);
   rainTipSizeControl.setRetain(false);
   rainTipSizeControl.setOptimistic(false);
   rainTipSizeControl.onCommand(onRainTipSizeCommand);
-  rainTipSizeControl.setCurrentState(rainTipMicrometers / 25400.0f);
-  windSpeedUnitControl.setIcon("mdi:speedometer");
-  windSpeedUnitControl.setName("Wind Speed Unit");
-  windSpeedUnitControl.setOptions("mph;km/h");
-  windSpeedUnitControl.setRetain(false);
-  windSpeedUnitControl.setOptimistic(false);
-  windSpeedUnitControl.onCommand(onWindSpeedUnitCommand);
-  windSpeedUnitControl.setCurrentState(windSpeedUnitKmh ? 1 : 0);
+  rainTipSizeControl.setCurrentState(
+      rainTipMicrometersToEntry(rainTipMicrometers, unitSystem));
+
+  unitSystemControl.setIcon("mdi:tune-variant");
+  unitSystemControl.setName("Measurement Unit System");
+  unitSystemControl.setOptions("USA;European Union;United Kingdom");
+  unitSystemControl.setRetain(false);
+  unitSystemControl.setOptimistic(false);
+  unitSystemControl.onCommand(onUnitSystemCommand);
+  unitSystemControl.setCurrentState(static_cast<uint8_t>(unitSystem));
 
   rainOneMinute.setIcon("mdi:weather-rainy");
   rainOneMinute.setName("1-Minute Rain");
-  rainOneMinute.setUnitOfMeasurement("in");
+  rainOneMinute.setUnitOfMeasurement(rainUnit);
   rainOneMinute.setDeviceClass("precipitation");
   rainOneMinute.setStateClass("measurement");
   rainOneHour.setIcon("mdi:weather-rainy");
   rainOneHour.setName("Latest 60-Minute Rain");
-  rainOneHour.setUnitOfMeasurement("in");
+  rainOneHour.setUnitOfMeasurement(rainUnit);
   rainOneHour.setDeviceClass("precipitation");
   rainOneHour.setStateClass("measurement");
   rainThreeHour.setIcon("mdi:weather-rainy");
   rainThreeHour.setName("Latest 3-Hour Rain");
-  rainThreeHour.setUnitOfMeasurement("in");
+  rainThreeHour.setUnitOfMeasurement(rainUnit);
   rainThreeHour.setDeviceClass("precipitation");
   rainThreeHour.setStateClass("measurement");
   rainSixHour.setIcon("mdi:weather-rainy");
   rainSixHour.setName("Latest 6-Hour Rain");
-  rainSixHour.setUnitOfMeasurement("in");
+  rainSixHour.setUnitOfMeasurement(rainUnit);
   rainSixHour.setDeviceClass("precipitation");
   rainSixHour.setStateClass("measurement");
   rainTwentyFourHour.setIcon("mdi:weather-rainy");
   rainTwentyFourHour.setName("Latest 24-Hour Rain");
-  rainTwentyFourHour.setUnitOfMeasurement("in");
+  rainTwentyFourHour.setUnitOfMeasurement(rainUnit);
   rainTwentyFourHour.setDeviceClass("precipitation");
   rainTwentyFourHour.setStateClass("measurement");
   rainSessionTotal.setIcon("mdi:weather-pouring");
   rainSessionTotal.setName("Rain Since Boot or Calibration Change");
-  rainSessionTotal.setUnitOfMeasurement("in");
+  rainSessionTotal.setUnitOfMeasurement(rainUnit);
   rainSessionTotal.setDeviceClass("precipitation");
   rainSessionTotal.setStateClass("total_increasing");
   rainTipCountSensor.setIcon("mdi:counter");
   rainTipCountSensor.setName("1-Minute Rain Tip Count");
   rainTipCountSensor.setUnitOfMeasurement("tips");
+
   windSpeed.setIcon("mdi:weather-windy");
   windSpeed.setName("2-Minute Sustained Wind Speed");
-  windSpeed.setUnitOfMeasurement(windSpeedUnitKmh ? "km/h" : "mph");
+  windSpeed.setUnitOfMeasurement(windUnit);
   windGust.setIcon("mdi:weather-windy");
   windGust.setName("3-Second Wind Gust");
-  windGust.setUnitOfMeasurement(windSpeedUnitKmh ? "km/h" : "mph");
+  windGust.setUnitOfMeasurement(windUnit);
   windDirection.setIcon("mdi:sun-compass");
   windDirection.setName("2-Minute True Wind Direction");
   windDirection.setUnitOfMeasurement("°");
@@ -662,8 +685,7 @@ void setup() {
   windGustPulseCount.setUnitOfMeasurement("pulses");
   boxTemperature.setIcon("mdi:thermometer");
   boxTemperature.setName("Internal Temp");
-  boxTemperature.setUnitOfMeasurement("°F");
-
+  boxTemperature.setUnitOfMeasurement(temperatureUnit);
   otaButton.setName("Enable OTA");
   otaButton.setIcon("mdi:update");
   otaButton.setRetain(false);
@@ -722,8 +744,8 @@ void loop() {
     expireOtaWindow();
   }
 
-  if (windUnitRestartPending &&
-      static_cast<int32_t>(millis() - windUnitRestartAt) >= 0) {
+  if (unitSystemRestartPending &&
+      static_cast<int32_t>(millis() - unitSystemRestartAt) >= 0) {
     Serial.flush();
     ESP.restart();
   }
