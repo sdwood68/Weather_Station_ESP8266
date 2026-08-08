@@ -4,6 +4,13 @@ All notable changes to the ESP8266 Weather Station firmware are documented here.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-08-07
+
+- Renamed the primary outdoor entities to Temperature and Humidity.
+- Moved Hostname, IP Address, Internal Temp, and rain since boot/calibration into Home Assistant Diagnostics.
+- Clear stale sea-level pressure state while the 12-hour temperature history rebuilds after boot, preventing hPa values from being displayed with inHg metadata.
+- Removed the aviation-focused Altimeter Setting entity from Home Assistant.
+
 ## [0.7.3] - 2026-08-07
 
 - Increased the Rain Gauge Tip Size Home Assistant control to four decimal places.

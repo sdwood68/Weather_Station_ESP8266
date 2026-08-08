@@ -6,6 +6,7 @@ void publishOtaStatus(const char* status) {
   otaState = status;
   otaStatus.setValue(otaState.c_str());
   mqtt.publish(otaRequestStatusTopic.c_str(), otaState.c_str(), true);
+
 }
 
 void pauseSensorTasks() {
@@ -46,6 +47,15 @@ void onMqttConnected() {
   mqtt.subscribe(otaRequestTopic.c_str());
   otaStatus.setValue(otaState.c_str());
   mqtt.publish(otaRequestStatusTopic.c_str(), otaState.c_str(), true);
+  const String obsoleteAltimeterDiscoveryTopic = String("homeassistant/sensor/") +
+      deviceChipId + "/altimeter_setting/config";
+  mqtt.publish(obsoleteAltimeterDiscoveryTopic.c_str(), "", true);
+  if (pressure_history_count < PRESSURE_HISTORY_SAMPLES) {
+    const String seaLevelStateTopic = String("weather_station/") +
+        deviceChipId + "/sea_level_pressure/stat_t";
+    mqtt.publish(seaLevelStateTopic.c_str(), "");
+    Serial.println(F("Cleared stale sea-level pressure while 12-hour history rebuilds"));
+  }
 }
 
 void onMqttDisconnected() {

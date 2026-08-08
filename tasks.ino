@@ -290,17 +290,6 @@ void report_task() {
       pressure_tendency_count++;
     }
 
-    if (stationElevationMeters != UNCONFIGURED_ELEVATION_METERS) {
-      const float altimeterHpa = calculateAltimeterSettingHpa(
-          stationPressureHpa, stationElevationMeters);
-      if (!isnan(altimeterHpa)) {
-        altimeterSetting.setValue(reportedPressure(altimeterHpa, unitSystem));
-        Serial.printf("Altimeter setting: %0.2f hPa\n", altimeterHpa);
-      }
-    } else {
-      Serial.println(F("Altimeter and sea-level pressure pending: configure station elevation"));
-    }
-
     if (stationElevationMeters != UNCONFIGURED_ELEVATION_METERS &&
         !isnan(outdoorTemperatureC)) {
       if (pressure_history_count == PRESSURE_HISTORY_SAMPLES) {
@@ -331,6 +320,9 @@ void report_task() {
       if (pressure_history_count < PRESSURE_HISTORY_SAMPLES) {
         pressure_history_count++;
       }
+    }
+    else if (stationElevationMeters == UNCONFIGURED_ELEVATION_METERS) {
+      Serial.println(F("Sea-level pressure pending: configure station elevation"));
     }
   }
   if (internalTempReadings > 0) {

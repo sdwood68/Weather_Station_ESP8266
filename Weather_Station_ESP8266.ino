@@ -16,7 +16,7 @@
 #define MQTT_BROKER_USER ""
 #define MQTT_BROKER_PASS ""
 
-#define FIRMWARE_VERSION "0.7.3"
+#define FIRMWARE_VERSION "0.7.4"
 #define HARDWARE_MODEL "ESP8266 Weather Station"
 #define OTA_COMPILE_BUDGET_MS 120000UL
 #define OTA_WINDOW_MS 480000UL  // 2x report period + 2x compile budget
@@ -74,6 +74,7 @@ const char* wifiSleepModeName();
 void IRAM_ATTR anemometer_isr();
 void IRAM_ATTR rain_gauge_isr();
 void resetRainHistory();
+extern uint16_t pressure_history_count;
 float get_wind_dir();
 
 /************************************************/
@@ -118,7 +119,6 @@ HASensorNumber humidity("humidity", HASensorNumber::PrecisionP1);
 HASensorNumber dewPoint("dew_point", HASensorNumber::PrecisionP1);
 HASensorNumber heatIndex("heat_index", HASensorNumber::PrecisionP1);
 HASensorNumber airPressure("air_pressure", HASensorNumber::PrecisionP3);
-HASensorNumber altimeterSetting("altimeter_setting", HASensorNumber::PrecisionP2);
 HASensorNumber seaLevelPressure("sea_level_pressure", HASensorNumber::PrecisionP2);
 HASensorNumber pressureChange3h("pressure_change_3h", HASensorNumber::PrecisionP1);
 HASensor pressureTrend("pressure_trend");
@@ -569,10 +569,10 @@ void setup() {
   const char* windUnit = usesKilometersPerHour(unitSystem) ? "km/h" : "mph";
 
   temperature.setIcon("mdi:sun-thermometer");
-  temperature.setName("Outside temp");
+  temperature.setName("Temperature");
   temperature.setUnitOfMeasurement(temperatureUnit);
   humidity.setIcon("mdi:water-percent");
-  humidity.setName("Outside Humidity");
+  humidity.setName("Humidity");
   humidity.setUnitOfMeasurement("%");
   dewPoint.setIcon("mdi:water-thermometer");
   dewPoint.setName("Dew Point");
@@ -583,9 +583,6 @@ void setup() {
   airPressure.setIcon("mdi:gauge");
   airPressure.setName("Station Pressure");
   airPressure.setUnitOfMeasurement(pressureUnit);
-  altimeterSetting.setIcon("mdi:gauge");
-  altimeterSetting.setName("Altimeter Setting");
-  altimeterSetting.setUnitOfMeasurement(pressureUnit);
   seaLevelPressure.setIcon("mdi:gauge");
   seaLevelPressure.setName("Sea-Level Pressure");
   seaLevelPressure.setUnitOfMeasurement(pressureUnit);
@@ -661,6 +658,7 @@ void setup() {
   rainSessionTotal.setUnitOfMeasurement(rainUnit);
   rainSessionTotal.setDeviceClass("precipitation");
   rainSessionTotal.setStateClass("total_increasing");
+  rainSessionTotal.setEntityCategory("diagnostic");
   rainTipCountSensor.setIcon("mdi:counter");
   rainTipCountSensor.setName("1-Minute Rain Tip Count");
   rainTipCountSensor.setUnitOfMeasurement("tips");
@@ -690,6 +688,7 @@ void setup() {
   boxTemperature.setIcon("mdi:thermometer");
   boxTemperature.setName("Internal Temp");
   boxTemperature.setUnitOfMeasurement(temperatureUnit);
+  boxTemperature.setEntityCategory("diagnostic");
   otaButton.setName("Enable OTA");
   otaButton.setIcon("mdi:update");
   otaButton.setRetain(false);
@@ -708,8 +707,10 @@ void setup() {
   macAddressSensor.setEntityCategory("diagnostic");
   ipAddressSensor.setName("IP Address");
   ipAddressSensor.setIcon("mdi:ip-network-outline");
+  ipAddressSensor.setEntityCategory("diagnostic");
   hostnameSensor.setName("Hostname");
   hostnameSensor.setIcon("mdi:web");
+  hostnameSensor.setEntityCategory("diagnostic");
   resetReasonSensor.setName("Reset Reason");
   resetReasonSensor.setIcon("mdi:restart-alert");
   resetReasonSensor.setEntityCategory("diagnostic");
